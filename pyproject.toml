@@ -1,0 +1,17 @@
+
+[project]
+name = "PyIndex"
+version = "2025.2.15"
+requires-python = ">=3.11"
+authors = [
+  {name = "Tyler Robbins", email = "tylerrobbins5678@gmail.com"}
+]
+maintainers = [
+  {name = "Tyler Robbins", email = "tylerrobbins5678@gmail.com"}
+]
+
+description = "Python object indexer for ETL, search for anything by anything"
+readme = "README.md"
+license = "MIT"
+keywords = ["index", "search", "storage", "ETL", "ELT", "searchmeta"]
+
