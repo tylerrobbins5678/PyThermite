@@ -1,5 +1,6 @@
 
-from typing import Hashable, Optional, TypeVar
+from math import inf
+from typing import Hashable, Iterable, Optional, TypeVar
 
 T = TypeVar('T')
 
@@ -50,9 +51,14 @@ class Index:
 
     def _get_search_order(self, attrs):
         counts = {}
-        for k in self._index.keys():
-            if k in attrs:
-                counts[k] = len(self._index[k])
+
+        # use inf to denote 0 since that search will return 0 results
+        # it will exclude the most objects since 0 are found
+        for attr in attrs:
+            if attr in self._index.keys():
+                counts[attr] = len(self._index[attr]) or inf
+            else:
+                counts[attr] = inf
         
         order = sorted(counts.items(), key=lambda item: item[1], reverse=True)
         return {attr:attrs[attr] for attr, _ in order}
@@ -63,17 +69,23 @@ class Index:
         # order attrs by most diversity first - performance improvement
         attrs = self._get_search_order(attrs)
 
-        res = None
-        for attr, val in attrs.items():
-            if attr not in self._index:
-                return set()
-            if val not in self._index[attr]:
-                return set()
+        res: Optional[set[T]] = None
+        for attr, vals in attrs.items():
 
-            vals = self._index[attr][val]
+            if not isinstance(vals, Iterable) or isinstance(vals, str):
+                vals = [vals]
+
+            single_arrt_val = set()
+            for val in vals:
+                if attr in self._index and val in self._index[attr]:
+                    single_arrt_val.update(self._index[attr][val])
+
             if res == None:
-                res = set(vals) # copy to not mutate original
+                res = single_arrt_val
             else:
-                res &= vals
+                res &= single_arrt_val
+
+            if len(res) == 0:
+                break
         
         return res
