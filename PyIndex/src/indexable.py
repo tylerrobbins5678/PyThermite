@@ -1,14 +1,4 @@
 
-class meta(type):
-    def __init__(cls,name,bases,dct):
-        def auto__call__init__(self, *a, **kw):
-            for base in cls.__bases__:
-                base.__init__(self, *a, **kw)
-            cls.__init__child_(self, *a, **kw)
-        cls.__init__child_ = cls.__init__
-        cls.__init__ = auto__call__init__
-
-
 class Indexable:
 
     @property
