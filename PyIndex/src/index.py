@@ -2,12 +2,16 @@
 from math import inf
 from typing import Hashable, Iterable, Optional, TypeVar
 
+from indexable import Indexable
+
 T = TypeVar('T')
 
 class Index:
 
     def __init__(self, objects: Optional[list[T]] = []) -> None:
         self._index: dict[str:dict[Hashable:set[T]]] = {}
+        for o in objects:
+            self.add_object(o)
 
     def add_object(
         self, 
@@ -26,23 +30,53 @@ class Index:
         if an attribute that exist in add that does not exist in the object, it will become the value of attr_default
         '''
         # get all attrs of object T
+        self._attr_default = attr_default
         attrs: set = set(obj.__dict__.keys())
         attrs.update(ignore_attrs)
         attrs -= add_attrs
         for attr in attrs:
-            self._update_index(obj, attr, attr_default)
+            self._add_index(obj, attr)
 
+        if isinstance(obj, Indexable):
+            obj.add_index(self)
+
+
+    def update_index(self, obj: T, attr: str, old_val: Hashable):
+        '''
+        updates an object existing in the index
+        '''
+        self._remove_index(obj, attr, old_val)
+        self._add_index(obj, attr)
         
-    def _update_index(self, obj: T, attr: str, attr_default: Hashable = None):
+
+    def _remove_index(self, obj: T, attr: str, val: Hashable):
+        # remove old index
+        if attr in self._index:
+            if val in self._index[attr]:
+                self._index[attr][val].discard(obj)
+
+                # object cleanup
+                if len(self._index[attr][val]) == 0:
+                    del self._index[attr][val]
+            # index cleanup
+            if len(self._index[attr]) == 0:
+                del self._index[attr]
+
+
+    def _add_index(self, obj: T, attr: str):
         '''
-        updates the index for a single attribute 
+        adds the index for a single attribute 
         '''
+
+        if attr.startswith("_"):
+            return
+
         if attr not in self._index:
             self._index[attr] = {}
-        attr_val = getattr(obj, attr, attr_default)
+        attr_val = getattr(obj, attr, self._attr_default)
         
         if not isinstance(attr_val, Hashable):
-            raise TypeError(f"Unhashable type {type(attr)}")
+            raise TypeError(f"Unhashable type {type(attr_val)}")
 
         if attr_val not in self._index[attr]:
             self._index[attr][attr_val] = set()

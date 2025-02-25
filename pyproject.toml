@@ -12,6 +12,11 @@ maintainers = [
 
 description = "Python object indexer for ETL, search for anything by anything"
 readme = "README.md"
-license = "MIT"
+
 keywords = ["index", "search", "storage", "ETL", "ELT", "searchmeta"]
 
+[project.optional-dependencies]
+dev = ["pip-tools"]
+
+[tools.setuptools]
+packages = ["src"]
