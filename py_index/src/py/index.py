@@ -146,7 +146,7 @@ if __name__ == "__main__":
     start = time.perf_counter()
 
     ind = Index()
-    for i in range(100_000):
+    for i in range(1_000_000):
         ind.get_by_attribute(key=["val1", "val2"])
 
     end = time.perf_counter()

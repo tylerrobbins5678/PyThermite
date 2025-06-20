@@ -18,3 +18,4 @@ rand = "0.9.0"
 pyo3 = { version = "0.25.0", features = ["extension-module"] }
 ahash = "0.8.12"
 ordered-float = "5.0.0"
+rayon = "1.10.0"

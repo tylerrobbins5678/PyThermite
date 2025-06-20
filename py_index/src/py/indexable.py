@@ -21,8 +21,8 @@ class Indexable:
         else:
             super().__setattr__(name, value)
     
-    def add_index(self, index: 'Index'):
+    def add_index(self, index):
         self._index.add(index)
 
-    def remove_index(self, index: 'Index'):
+    def remove_index(self, index):
         self._index.remove(index)
