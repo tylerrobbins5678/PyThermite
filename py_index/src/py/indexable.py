@@ -1,6 +1,6 @@
 
 
-class Indexable:
+class _Indexable:
 
     @property
     def _index(self) -> set:

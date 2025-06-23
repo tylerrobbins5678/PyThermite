@@ -2,17 +2,18 @@ use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use std::hash::{Hash, Hasher};
 
+#[derive(Debug)]
 pub struct PyValue {
     obj: Py<PyAny>,
     hash: u64,
 }
 
 impl PyValue {
-    pub fn new(obj: Py<PyAny>) -> PyResult<Self> {
-        Python::with_gil( | py | {
+    pub fn new(obj: &Py<PyAny>) -> PyResult<Self> {
+        Python::with_gil(|py| {
             let hash = obj.clone_ref(py).into_bound(py).hash()? as u64;
             Ok(Self {
-                obj: obj,
+                obj: obj.clone_ref(py),
                 hash,
             })
         })
@@ -25,11 +26,7 @@ impl PyValue {
 
 impl PartialEq for PyValue {
     fn eq(&self, other: &Self) -> bool {
-        Python::with_gil(|py| {
-            let a = self.obj.clone_ref(py).into_bound(py);
-            let b = other.obj.clone_ref(py).into_bound(py);
-            a.eq(b).unwrap_or(false)
-        })
+        self.hash == other.hash
     }
 }
 
