@@ -6,3 +6,5 @@ mod py_dict_values;
 mod indexable;
 mod stored_item;
 mod value;
+mod filtered_index;
+mod query;

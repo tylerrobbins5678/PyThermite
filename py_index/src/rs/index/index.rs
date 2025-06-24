@@ -3,7 +3,7 @@ use std::{collections::{HashMap, HashSet}, sync::{Arc, RwLock}};
 use pyo3::{prelude::*, types::PyList};
 use pyo3::types::PyString;
 
-use crate::index::{stored_item, Indexable};
+use crate::index::{filtered_index::FilteredIndex, query::{filter_index_by_hashes, kwargs_to_hash_query}, stored_item, Indexable};
 
 use super::stored_item::StoredItem;
 use super::value::PyValue;
@@ -53,25 +53,26 @@ impl Index{
 
     pub fn add_object(&self, py: Python, py_ref: PyRef<Indexable>) -> PyResult<()> {
 
+        let py_obj: Py<Indexable> = py_ref.clone().into_pyobject(py)?.unbind();
+        let py_obj_arc = Arc::new(py_obj);
+
         let mut py_val_hashmap: HashMap<String, PyValue> = HashMap::new();
         for (key, value) in unsafe { py_ref.py_values.map_ref() }.iter(){
             if key.starts_with("_"){continue;}
             py_val_hashmap.insert(key.clone(), value.clone());
         }
 
-        let py_obj: Py<Indexable> = py_ref.clone().into_pyobject(py)?.unbind();
-        let py_obj_arc = Arc::new(py_obj);
-
-        let mut attr_values = HashMap::new();
         let stored_obj = Arc::new(StoredItem::new(py_ref.clone(), py_obj_arc.clone()));
-
-        let mut index= self.index.write().unwrap();
         
-        for (key, value) in py_val_hashmap.iter() {
-            if key.starts_with("_"){continue;}
-            _add_index(&mut index, stored_obj.clone(), key, value.clone());
-            attr_values.insert(key.clone(), value.clone());
-        }
+        py.allow_threads(||{
+
+            let mut index= self.index.write().unwrap();
+            for (key, value) in py_val_hashmap.iter() {
+                if key.starts_with("_"){continue;}
+                _add_index(&mut index, stored_obj.clone(), key, value.clone());
+            }
+
+        });
 
         py_obj_arc.extract::<PyRefMut<Indexable>>(py)?.add_index(Arc::new(self.clone()), stored_obj);
 
@@ -97,12 +98,13 @@ impl Index{
         &self,
         py: Python,
         kwargs: Option<HashMap<String, Py<PyAny>>>,
-    ) -> PyResult<Self> {
+    ) -> PyResult<FilteredIndex> {
         let query = kwargs_to_hash_query(py, &kwargs.unwrap_or_default())?;
         py.allow_threads(|| {
             let index = self.index.read().unwrap();
-            Ok(Self {
-                index: Arc::new(RwLock::new(_reduced(&index, &query))),
+            Ok(FilteredIndex {
+                index: self.index.clone(),
+                allowed_items: filter_index_by_hashes(&index, &query)
             })
         })
     }
@@ -200,107 +202,6 @@ fn union_with(index: &Index, other: &Index) -> PyResult<()> {
     Ok(())
 }
 
-fn filter_index_by_hashes(
-    index: &HashMap<String, HashMap<PyValue, HashSet<Arc<StoredItem>>>>,
-    query: &HashMap<String, HashSet<PyValue>>,
-) -> HashSet<Arc<StoredItem>> {
-    let mut sets_iter: HashSet<Arc<StoredItem>> = HashSet::new();
-    let mut first = true;
-    let eh = HashMap::new();
-
-    let mut sorted_query: Vec<_> = query.iter().collect();
-    sorted_query.sort_by_key(|(attr, hashes)| {
-        index.get(*attr)
-            .map(|attr_map| {
-                hashes.iter()
-                    .map(|h| attr_map.get(h).map_or(0, |set| set.len()))
-                    .sum::<usize>()
-            })
-            .unwrap_or(0)
-    });
-    
-    for (attr, allowed_hashes) in sorted_query {
-        
-        let mut per_attr_match: HashSet<Arc<StoredItem>> = HashSet::new();
-
-        let attr_map = index.get(attr).unwrap_or(&eh);
-        
-        for h in allowed_hashes {
-            if let Some(matched) = attr_map.get(h) {
-                if first {
-                    per_attr_match.extend(matched.clone());
-                } else {
-                    if sets_iter.len() < matched.len(){
-                        for item in &sets_iter {
-                            if matched.contains(item) {
-                                per_attr_match.insert(item.clone());
-                            }
-                        }
-                    } else {
-                        for item in matched {
-                            if sets_iter.contains(item) {
-                                per_attr_match.insert(item.clone());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if !first && sets_iter.is_empty() {
-            return HashSet::new();
-        }
-
-        sets_iter = if first {
-            per_attr_match
-        } else {
-            sets_iter.intersection(&per_attr_match).cloned().collect()
-        };
-        first = false;
-    }
-
-    sets_iter
-}
-
-
-fn kwargs_to_hash_query(
-    py: Python,
-    kwargs: &HashMap<String, Py<PyAny>>,
-) -> PyResult<HashMap<String, HashSet<PyValue>>> {
-    let mut query = HashMap::new();
-
-    for (attr, py_val) in kwargs {
-        let val_ref = py_val.clone_ref(py).into_bound(py);
-        let mut hash_set = HashSet::new();
-
-        // Detect if iterable but not string
-        let is_str = val_ref.is_instance_of::<PyString>();
-
-        if !is_str {
-            match val_ref.try_iter() {
-                Ok(iter) => {
-                    for item in iter {
-                        let lookup_item = PyValue::new(&item.unwrap().unbind())?;
-                        hash_set.insert(lookup_item);
-                    }
-                }
-                Err(_) => {
-                    // Not iterable, treat as a single value
-                    hash_set.insert(PyValue::new(py_val)?);
-                }
-            }
-        } else {
-            // Is a string, treat as a single value
-            hash_set.insert(PyValue::new(py_val)?);
-        }
-
-        // Single value
-        query.insert(attr.clone(), hash_set);
-    }
-
-    Ok(query)
-}
-
 
 pub fn _add_index(
     index: &mut std::sync::RwLockWriteGuard<'_, HashMap<String, HashMap<PyValue, HashSet<Arc<StoredItem>>>>>, 
@@ -316,40 +217,6 @@ pub fn _add_index(
         .or_insert_with(|| HashSet::<Arc<StoredItem>>::new());
     
     val_entry.insert(obj);
-}
-
-fn _reduced(
-    index: &HashMap<String, HashMap<PyValue, HashSet<Arc<StoredItem>>>>,
-    query: &HashMap<String, HashSet<PyValue>>
-) -> HashMap<String, HashMap<PyValue, HashSet<Arc<StoredItem>>>> {
-    let start = Instant::now();
-
-    let survivors = filter_index_by_hashes(index, query);
-
-    let duration = start.elapsed();
-    eprintln!("Elapsed time to get survivors: {:.3?}", duration);
-
-    let start = Instant::now();
-
-    let mut new_index: HashMap<String, HashMap<PyValue, HashSet<Arc<StoredItem>>>> = HashMap::new();
-
-    for item in survivors {
-        let attr_map = unsafe { item.item.py_values.map_ref() };
-        
-        for (attr, val) in attr_map.iter() {
-            new_index
-                .entry(attr.clone())
-                .or_insert_with(HashMap::new)
-                .entry(val.clone())
-                .or_insert_with(HashSet::new)
-                .insert(item.clone());
-        }
-    }
-
-    let duration = start.elapsed();
-    eprintln!("Elapsed time to rebuild index: {:.3?}", duration);
-
-    new_index
 }
 
 fn _reduced_in_place(
