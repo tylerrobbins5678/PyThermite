@@ -1,24 +1,23 @@
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, Weak};
 use std::hash::{Hash, Hasher};
-use ahash::{HashMap, HashMapExt};
 use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyDict, PyList, PyString, PyTuple}, Bound, IntoPyObject, Py, PyAny, PyObject, PyRef, PyResult, Python};
 
 
+use crate::index::py_dict_values::UnsafePyValues;
 use crate::index::value::PyValue;
 use crate::index::{stored_item::StoredItem, Index};
 
-#[derive(Debug)]
 #[derive(Clone)]
 struct IndexMeta{
     index: Arc<Index>,
     stored_item: Weak<StoredItem>
 }
 
-#[derive(Debug)]
 #[pyclass(subclass)]
 pub struct Indexable{
     meta: Arc<Mutex<Vec<IndexMeta>>>,
-    pub py_values: Arc<RwLock<HashMap<String, PyValue>>>
+    pub py_values: Arc<UnsafePyValues>
 }
 
 
@@ -32,7 +31,7 @@ impl Indexable{
     ) -> Self {
         Self {
             meta: Arc::new(Mutex::new(vec![])),
-            py_values: Arc::new(RwLock::new(HashMap::new()))
+            py_values: Arc::new(UnsafePyValues::new(HashMap::new()))
         }
     }
 
@@ -41,7 +40,7 @@ impl Indexable{
         let none = py.None(); // owns the Py<PyAny> until end of function
         
         let result: PyResult<()> = py.allow_threads(||{
-            let readlock = self.py_values.read().unwrap();
+            let readlock = unsafe { self.py_values.map_ref() };
             let old_val = match readlock.get(&name){
                 Some(ov) => ov,
                 _ => &PyValue::new(&none).unwrap()
@@ -57,14 +56,14 @@ impl Indexable{
             Ok(())
         });
 
-        let mut write_lock = self.py_values.write().unwrap();
+        let write_lock = unsafe { self.py_values.get_mut() };
         write_lock.insert(name.clone(), PyValue::new(&value)?);
 
         result
     }
 
     fn __getattr__(&self, py: Python, name: &str) -> PyResult<Py<PyAny>> {
-        let readlock = self.py_values.read().unwrap();
+        let readlock = unsafe { self.py_values.map_ref() };
         match readlock.get(name) {
             Some(value) => Ok(value.get_obj().clone_ref(py)),
             None => Err(pyo3::exceptions::PyAttributeError::new_err(format!(
@@ -77,7 +76,7 @@ impl Indexable{
     fn __dir__(py_ref: PyRef<Self>, py: Python<'_>) -> PyResult<Py<PyList>> {
         let mut names: Vec<PyObject> = vec![];
         {
-            let readlock = py_ref.py_values.read().unwrap();
+            let readlock = unsafe { py_ref.py_values.map_ref() };
             for key in readlock.keys() {
                 names.push(PyString::new(py, key).into_pyobject(py)?.unbind().into_any());
             }
@@ -98,7 +97,7 @@ impl Indexable{
     }
 
     fn __repr__(&self) -> PyResult<String> {
-        let readlock = self.py_values.read().unwrap();
+        let readlock = unsafe { self.py_values.map_ref() };
         Ok(format!("<MyClass with {} attributes>", readlock.len()))
     }
 }

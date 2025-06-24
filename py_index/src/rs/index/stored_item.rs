@@ -1,19 +1,18 @@
 use pyo3::{basic::CompareOp, types::PyAnyMethods, Bound, BoundObject, IntoPyObject, Py, PyAny, PyObject, Python};
 use std::{collections::HashMap, hash::{Hash, Hasher}, sync::{Arc, RwLock}};
 
-use crate::index::{value::PyValue, Indexable};
+use crate::index::{py_dict_values::UnsafePyValues, value::PyValue, Indexable};
 
-#[derive(Debug)]
 pub struct StoredItem{
     pub item: Indexable,
-    pub attr_values: Arc<RwLock<HashMap<String, PyValue>>>,
+    pub py_item: Arc<Py<Indexable>>,
 }
 
 impl StoredItem {
-    pub fn new(item: &Indexable, attr_values: Arc<RwLock<HashMap<String, PyValue>>>) -> Self {
+    pub fn new(item: Indexable, py_item: Arc<Py<Indexable>>) -> Self {
         Self {
             item: item.clone(),
-            attr_values: attr_values
+            py_item: py_item.clone()
         }
     }
 }
@@ -22,7 +21,7 @@ impl Clone for StoredItem {
     fn clone(&self) -> Self {
         StoredItem {
             item: self.item.clone(),
-            attr_values: self.attr_values.clone()
+            py_item: self.py_item.clone()
         }
     }
 }
@@ -47,8 +46,6 @@ impl<'py> IntoPyObject<'py> for StoredItem {
     type Error = std::convert::Infallible;
 
     fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
-
-        let pycell: Py<Indexable> = Py::new(py, self.item.clone()).unwrap();
-        Ok(pycell.into_pyobject(py)?.into_any())
+        Ok(self.py_item.clone_ref(py).into_pyobject(py)?.into_any())
     }
 }

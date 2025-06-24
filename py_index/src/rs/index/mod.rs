@@ -2,6 +2,7 @@ pub mod index;
 pub use index::Index;
 pub use indexable::Indexable;
 
+mod py_dict_values;
 mod indexable;
 mod stored_item;
 mod value;

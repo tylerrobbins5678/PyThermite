@@ -18,7 +18,7 @@ class MyObject(Indexable):
 
 
 # Dataset size
-N = 10_000
+N = 1_000_000
 ITERATIONS = 1
 
 print("creating Objects")
@@ -63,10 +63,10 @@ mem_bix = mem_usage_mb()
 print("Starting index")
 start = time.perf_counter()
 for i in range(ITERATIONS):
-    # filtered_ix = index.reduced(a = 1000, b = 2)
-    filtered_ix = index.reduced(b = 2)
+    filtered_ix = index.get_by_attribute(b = 2)
+#    filtered_ix = index.reduced(b = 2)
+#    filtered_ix = filtered_ix.collect()
 duration_ix = time.perf_counter() - start
-filtered_ix = filtered_ix.collect()
 mem_ix = mem_usage_mb()
 
 # Print Results
