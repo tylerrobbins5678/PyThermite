@@ -1,6 +1,8 @@
 pub mod index;
+
 pub use index::Index;
 pub use indexable::Indexable;
+pub use query::PyQueryExpr;
 
 mod py_dict_values;
 mod indexable;

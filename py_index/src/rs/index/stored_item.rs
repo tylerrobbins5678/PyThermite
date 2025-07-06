@@ -1,7 +1,7 @@
-use pyo3::{basic::CompareOp, types::PyAnyMethods, Bound, BoundObject, IntoPyObject, Py, PyAny, PyObject, Python};
-use std::{collections::HashMap, hash::{Hash, Hasher}, sync::{Arc, RwLock}};
+use pyo3::{Bound, IntoPyObject, Py, PyAny, Python};
+use std::{hash::{Hash, Hasher}, sync::Arc};
 
-use crate::index::{py_dict_values::UnsafePyValues, value::PyValue, Indexable};
+use crate::index::Indexable;
 
 pub struct StoredItem{
     pub item: Indexable,
@@ -12,7 +12,7 @@ impl StoredItem {
     pub fn new(item: Indexable, py_item: Arc<Py<Indexable>>) -> Self {
         Self {
             item: item.clone(),
-            py_item: py_item.clone()
+            py_item: py_item.clone(),
         }
     }
 }
@@ -21,7 +21,7 @@ impl Clone for StoredItem {
     fn clone(&self) -> Self {
         StoredItem {
             item: self.item.clone(),
-            py_item: self.py_item.clone()
+            py_item: self.py_item.clone(),
         }
     }
 }

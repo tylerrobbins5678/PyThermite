@@ -1,16 +1,18 @@
-use std::{collections::{HashMap, HashSet}, sync::{Arc, RwLock}, time::Instant};
+use std::{collections::HashMap, sync::{Arc, RwLock}};
 
+use croaring::Bitmap;
 use pyo3::{pyclass, pymethods, Py, PyAny, PyResult, Python};
 
-use crate::index::{query::{filter_index_by_hashes, kwargs_to_hash_query}, stored_item::StoredItem, value::PyValue, Index, Indexable};
+use crate::index::{query::{filter_index_by_hashes, kwargs_to_hash_query, QueryMap}, stored_item::StoredItem, value::PyValue, Index, Indexable};
 
 
 
 #[pyclass]
 #[derive(Clone)]
 pub struct FilteredIndex {
-    pub index: Arc<RwLock<HashMap<String, HashMap<PyValue, HashSet<Arc<StoredItem>>>>>>,       // Shared with Index
-    pub allowed_items: HashSet<Arc<StoredItem>>,
+    pub index: Arc<RwLock<HashMap<String, QueryMap>>>,
+    pub items: Arc<RwLock<Vec<Option<Arc<StoredItem>>>>>,
+    pub allowed_items: Bitmap,
 }
 
 
@@ -28,38 +30,63 @@ impl FilteredIndex{
             let index = self.index.read().unwrap();
             Ok(FilteredIndex {
                 index: self.index.clone(),
-                allowed_items: filter_index_by_hashes(&index, &query).intersection(&self.allowed_items).cloned().collect()
+                items: self.items.clone(),
+                allowed_items: filter_index_by_hashes(&index, &query).and(&self.allowed_items)
             })
         })
     }
 
     pub fn collect(&self, py:Python) -> PyResult<Vec<Py<Indexable>>> {
-        Ok(self.allowed_items.iter().map(|arc| (*arc).py_item.clone_ref(py)).collect())
+        self.get_from_indexes(py, &self.allowed_items)
     }
 
     pub fn rebase(&self) -> PyResult<Index> {
-        let start = Instant::now();
 
-        let mut new_index: HashMap<String, HashMap<PyValue, HashSet<Arc<StoredItem>>>> = HashMap::new();
+        let items = self.items.read().unwrap();
+        let max_size = self.allowed_items.maximum().unwrap_or(0);
 
-        for item in &self.allowed_items {
+        let res_index = Index{
+            index: Arc::new(RwLock::new(HashMap::new())),
+            items: Arc::new(RwLock::new(Vec::with_capacity(max_size as usize))),
+            allowed_items: self.allowed_items.clone()
+        };
+
+        let mut new_index = res_index.index.write().unwrap();
+        let mut new_items = res_index.items.write().unwrap();
+
+        let res_index_arc = Arc::new(res_index.clone());
+        new_items.resize(max_size as usize + 1, None);
+        
+        for idx in self.allowed_items.iter() {
+            let item = items[idx as usize].as_ref().unwrap();
+            item.item.add_index(res_index_arc.clone());
+
+            new_items[idx as usize] = Some(item.clone());
             let attr_map = unsafe { item.item.py_values.map_ref() };
             
             for (attr, val) in attr_map.iter() {
                 new_index
-                    .entry(attr.to_string())
-                    .or_insert_with(HashMap::new)
-                    .entry(val.clone())
-                    .or_insert_with(HashSet::new)
-                    .insert(item.clone());
+                    .entry(attr.clone())
+                    .or_insert_with(QueryMap::new)
+                    .insert(val.clone(), idx);
             }
         }
 
-        let duration = start.elapsed();
-        eprintln!("Elapsed time to rebase index: {:.3?}", duration);
+        drop(new_index);
+        drop(new_items);
 
-        Ok(Index{
-            index: Arc::new(RwLock::new(new_index))
-        })
+        Ok(res_index)
     }
+}
+
+impl FilteredIndex{
+
+    fn get_from_indexes(&self, py: Python, indexes: &Bitmap) -> PyResult<Vec<Py<Indexable>>>{
+        let items = self.items.read().unwrap();
+        let results: Vec<Py<Indexable>> = indexes.iter()
+            .map(|arc| items.get(arc as usize).unwrap().clone().unwrap().py_item.clone_ref(py))
+            .collect();
+        Ok(results)
+    }
+
 }
