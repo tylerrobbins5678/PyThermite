@@ -1,53 +1,77 @@
-use std::collections::HashSet;
-use std::time::Instant;
-
-use rand::{Rng, SeedableRng};
-use rand::rngs::StdRng;
-use roaring::RoaringBitmap;
-
+use std::{ops::Bound, time::Instant};
 use croaring::Bitmap;
+use ordered_float::OrderedFloat;
 
-const NUM_BITS: usize = 10_000_000;
-const MAX_INDEX: u64 = 100_000_000;
-
+mod index; // Replace with your actual module path
+use index::{BitMapBTree, Key, CompositeKey128};
 
 fn main() {
-    // Generate random keys
-    let mut rng = StdRng::seed_from_u64(42);
-    let keys1: Vec<u32> = (0..NUM_BITS).map(|_| rng.gen_range(0..=MAX_INDEX as u32)).collect();
-    let keys2: Vec<u32> = (0..NUM_BITS).map(|_| rng.gen_range(0..=MAX_INDEX as u32)).collect();
 
-    // Benchmark RoaringBitmap
-    let start = Instant::now();
-    let hs1: HashSet<_> = keys1.iter().cloned().collect();
-    let hs2: HashSet<_> = keys2.iter().cloned().collect();
-    let insert_time = start.elapsed();
-    println!("HashSet insert time: {:?}", insert_time);
+    let mut tree = BitMapBTree::new();
+    let mut id: u32 = 0;
 
-    let start = Instant::now();
-    
-    let inter_count = hs1.intersection(&hs2).count();
-    let intersect_time = start.elapsed();
-    println!("HashSet intersect time: {:?}", intersect_time);
-    println!("HashSet intersect count: {}", inter_count);
+    const N: i64 = 1_000;
+    // const N: i64 = 15_000;
 
-    // Croaring
+    // Insert Int keys
     let start = Instant::now();
-    let mut bs1 = Bitmap::new();
-    for &k in &keys1 {
-        bs1.add(k);
+    for i in -N..N {
+        // eprintln!("inserting {}", i);
+        tree.insert(Key::Int(i), id);
+        id += 1;
+        //tree.debug_print();
     }
-    let mut bs2 = Bitmap::new();
-    for &k in &keys2 {
-        bs2.add(k);
-    }
-    let insert_time_bs = start.elapsed();
-    println!("Croaring BitSet insert time: {:?}", insert_time_bs);
 
-    let start = Instant::now();
-    let bs_inter = bs1.and(&bs2);
-    let intersect_time_bs = start.elapsed();
-    println!("Croaring BitSet intersect time: {:?}", intersect_time_bs);
-    println!("Croaring BitSet intersect count: {:?}", bs_inter.cardinality());
+
+    // Insert Float keys
+//    for i in -N * 2..N * 2 {
+//        let val = (i as f64) * 0.5;
+//        tree.insert(Key::FloatOrdered(OrderedFloat(val)), id);
+//        id += 1;
+//    }
+    let duration = start.elapsed();
+    println!("Inserted {} keys in {:?}", id, duration);
+
+    let bm = tree.root.get_bitmap();
+    eprintln!("{}", bm.cardinality());
+
+    // tree.debug_print();
+
+    // for i in 0..N{
+        // assert!(tree.root.get_bitmap().contains(i as u32));
+    // }
+
+    // Query Int range
+    let q_start = Instant::now();
+    let int_result = tree.range_query(
+        Bound::Included(&Key::Int(5000)),
+        Bound::Unbounded
+    );
+    let int_duration = q_start.elapsed();
+    println!(
+        "Int range query returned {} IDs in {:?}",
+        int_result.cardinality(),
+        int_duration
+    );
+
+    // Query Float range
+    let f_start = Instant::now();
+    let float_result = tree.range_query(
+        Bound::Included(&Key::FloatOrdered(OrderedFloat(1.0))),
+        Bound::Included(&Key::FloatOrdered(OrderedFloat(15.0))),
+    );
+
+    let f_duration = f_start.elapsed();
+    println!(
+        "Float range query returned {} IDs in {:?}",
+        float_result.cardinality(),
+        f_duration
+    );
+
+//    tree.debug_print_range(
+//        2, 
+//        Some(&Key::FloatOrdered(OrderedFloat(0.0))),
+//        Some(&Key::FloatOrdered(OrderedFloat(9.5))),
+//    );
 
 }

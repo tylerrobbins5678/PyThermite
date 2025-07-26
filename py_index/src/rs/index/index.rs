@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::{Arc, RwLock}, time::Instant, vec};
 use croaring::Bitmap;
 use pyo3::prelude::*;
 
-use crate::index::{filtered_index::FilteredIndex, query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, PyQueryExpr, QueryExpr, QueryMap}, Indexable};
+use crate::index::{filtered_index::FilteredIndex, query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, PyQueryExpr, QueryMap}, Indexable};
 
 use super::stored_item::StoredItem;
 use super::value::PyValue;

@@ -4,13 +4,12 @@ use croaring::{bitmap, Bitmap};
 use ordered_float::OrderedFloat;
 use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyString}, Py, PyAny, PyObject, PyResult, Python};
 
-use crate::index::value::{PyValue, RustCastValue};
+use crate::index::{value::{PyValue, RustCastValue}, BitMapBTree, Key};
 
 #[derive(Default)]
 pub struct QueryMap {
     exact: HashMap<PyValue, Arc<UnsafeCell<Bitmap>>>,
-    int_ordered: BTreeMap<i64, Arc<UnsafeCell<Bitmap>>>,
-    float_ordered: BTreeMap<OrderedFloat<f64>, Arc<UnsafeCell<Bitmap>>>,
+    num_ordered: BitMapBTree,
     str_ordered: BTreeMap<String, Arc<UnsafeCell<Bitmap>>>,
 }
 
@@ -21,8 +20,7 @@ impl QueryMap {
     pub fn new() -> Self{
         Self{
             exact: HashMap::new(),
-            int_ordered: BTreeMap::new(),
-            float_ordered: BTreeMap::new(),
+            num_ordered: BitMapBTree::new(),
             str_ordered: BTreeMap::new()
         }
     }
@@ -34,14 +32,13 @@ impl QueryMap {
         unsafe { &mut *val_entry.get() }.add(obj_id);
 
         // Insert into the right ordered map based on primitive type
+
         match &value.get_primitive() {
             RustCastValue::Int(i) => {
-                let entry = self.int_ordered.entry(*i)
-                    .or_insert_with(|| val_entry.clone());
+                self.num_ordered.insert(Key::Int(*i), obj_id);
             }
             RustCastValue::Float(f) => {
-                let entry = self.float_ordered.entry(OrderedFloat(*f))
-                    .or_insert_with(|| val_entry.clone());
+                self.num_ordered.insert(Key::FloatOrdered(OrderedFloat(*f)), obj_id);
             }
             RustCastValue::Str(s) => {
                 let entry = self.str_ordered.entry(s.clone())
@@ -109,43 +106,19 @@ impl QueryMap {
 
 impl QueryMap {
 
-    fn get_range_number(
-        &self,
-        int_lower: Bound<i64>,
-        int_upper: Bound<i64>,
-        float_lower: Bound<OrderedFloat<f64>>,
-        float_upper: Bound<OrderedFloat<f64>>,
-    ) -> Bitmap {
-        let mut result = Bitmap::new();
-
-        for (_, bitmap) in self.int_ordered.range((int_lower, int_upper)) {
-            result.or_inplace(unsafe { &*bitmap.get() });
-        }
-
-        for (_, bitmap) in self.float_ordered.range((float_lower, float_upper)) {
-            result.or_inplace(unsafe { &*bitmap.get() });
-        }
-
-        result
-    }
-
     pub fn gt(&self, val: &RustCastValue) -> Bitmap {
         // strictly greater than
         match val {
             RustCastValue::Int(i) => {
-                self.get_range_number(
-                    std::ops::Bound::Excluded(*i),
-                    std::ops::Bound::Unbounded,
-                    std::ops::Bound::Excluded(OrderedFloat(*i as f64)),
-                    std::ops::Bound::Unbounded,
+                self.num_ordered.range_query(
+                    Bound::Excluded(&Key::Int(*i)),
+                    Bound::Unbounded
                 )
             }
             RustCastValue::Float(f) => {
-                self.get_range_number(
-                    std::ops::Bound::Excluded(*f as i64),
-                    std::ops::Bound::Unbounded,
-                    std::ops::Bound::Excluded(OrderedFloat(*f)),
-                    std::ops::Bound::Unbounded,
+                self.num_ordered.range_query(
+                    Bound::Excluded(&Key::FloatOrdered(OrderedFloat(*f))),
+                    Bound::Unbounded
                 )
             }
             RustCastValue::Str(f) => {
@@ -166,25 +139,15 @@ impl QueryMap {
         // strictly greater than
         match val {
             RustCastValue::Int(i) => {
-                self.get_range_number(
-                    std::ops::Bound::Included(*i),
-                    std::ops::Bound::Unbounded,
-                    std::ops::Bound::Included(OrderedFloat(*i as f64)),
-                    std::ops::Bound::Unbounded,
+                self.num_ordered.range_query(
+                    Bound::Included(&Key::Int(*i)),
+                    Bound::Unbounded
                 )
             }
             RustCastValue::Float(f) => {
-                let int_lower;
-                if f.fract() == 0.0 {
-                    int_lower = std::ops::Bound::Included(*f as i64);
-                } else {
-                    int_lower = std::ops::Bound::Excluded(*f as i64);
-                }
-                self.get_range_number(
-                    int_lower,
-                    std::ops::Bound::Unbounded,
-                    std::ops::Bound::Included(OrderedFloat(*f)),
-                    std::ops::Bound::Unbounded,
+                self.num_ordered.range_query(
+                    Bound::Included(&Key::FloatOrdered(OrderedFloat(*f))),
+                    Bound::Unbounded
                 )
             }
             RustCastValue::Str(f) => {
@@ -204,19 +167,15 @@ impl QueryMap {
     pub fn lt(&self, val: &RustCastValue) -> Bitmap {
         match val {
             RustCastValue::Int(i) => {
-                self.get_range_number(
-                    std::ops::Bound::Unbounded,
-                    std::ops::Bound::Excluded(*i),
-                    std::ops::Bound::Unbounded,
-                    std::ops::Bound::Excluded(OrderedFloat(*i as f64)),
+                self.num_ordered.range_query(
+                    Bound::Unbounded,
+                    Bound::Excluded(&Key::Int(*i))
                 )
             }
             RustCastValue::Float(f) => {
-                self.get_range_number(
-                    std::ops::Bound::Unbounded,
-                    std::ops::Bound::Excluded(*f as i64),
-                    std::ops::Bound::Unbounded,
-                    std::ops::Bound::Excluded(OrderedFloat(*f)),
+                self.num_ordered.range_query(
+                    Bound::Unbounded,
+                    Bound::Excluded(&Key::FloatOrdered(OrderedFloat(*f)))
                 )
             }
             RustCastValue::Str(f) => {
@@ -237,25 +196,15 @@ impl QueryMap {
         // strictly greater than
         match val {
             RustCastValue::Int(i) => {
-                self.get_range_number(
-                    std::ops::Bound::Unbounded,
-                    std::ops::Bound::Included(*i),
-                    std::ops::Bound::Unbounded,
-                    std::ops::Bound::Included(OrderedFloat(*i as f64)),
+                self.num_ordered.range_query(
+                    Bound::Unbounded,
+                    Bound::Included(&Key::Int(*i))
                 )
             }
             RustCastValue::Float(f) => {
-                let int_upper;
-                if f.fract() == 0.0 {
-                    int_upper = std::ops::Bound::Included(*f as i64);
-                } else {
-                    int_upper = std::ops::Bound::Excluded(*f as i64);
-                }
-                self.get_range_number(
-                    std::ops::Bound::Unbounded,
-                    int_upper,
-                    std::ops::Bound::Unbounded,
-                    std::ops::Bound::Included(OrderedFloat(*f)),
+                self.num_ordered.range_query(
+                    Bound::Unbounded,
+                    Bound::Included(&Key::FloatOrdered(OrderedFloat(*f)))
                 )
             }
             RustCastValue::Str(f) => {
