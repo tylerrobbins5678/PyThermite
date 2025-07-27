@@ -8,15 +8,17 @@ use index::{BitMapBTree, Key, CompositeKey128};
 fn main() {
 
     let mut tree = BitMapBTree::new();
+    let mut all_valid = Bitmap::new();
     let mut id: u32 = 0;
 
-    const N: i64 = 1_000;
+    const N: i64 = 1_000_000;
     // const N: i64 = 15_000;
 
     // Insert Int keys
     let start = Instant::now();
     for i in -N..N {
         // eprintln!("inserting {}", i);
+        all_valid.add(id);
         tree.insert(Key::Int(i), id);
         id += 1;
         //tree.debug_print();
@@ -26,6 +28,7 @@ fn main() {
     // Insert Float keys
 //    for i in -N * 2..N * 2 {
 //        let val = (i as f64) * 0.5;
+//        all_valid.add(id);
 //        tree.insert(Key::FloatOrdered(OrderedFloat(val)), id);
 //        id += 1;
 //    }
@@ -45,7 +48,8 @@ fn main() {
     let q_start = Instant::now();
     let int_result = tree.range_query(
         Bound::Included(&Key::Int(5000)),
-        Bound::Unbounded
+        Bound::Unbounded,
+        &all_valid
     );
     let int_duration = q_start.elapsed();
     println!(
@@ -59,6 +63,7 @@ fn main() {
     let float_result = tree.range_query(
         Bound::Included(&Key::FloatOrdered(OrderedFloat(1.0))),
         Bound::Included(&Key::FloatOrdered(OrderedFloat(15.0))),
+        &all_valid
     );
 
     let f_duration = f_start.elapsed();

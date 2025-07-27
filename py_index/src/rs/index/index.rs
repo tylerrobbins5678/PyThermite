@@ -189,7 +189,7 @@ impl Index{
             Ok(FilteredIndex {
                 index: self.index.clone(),
                 items: self.items.clone(),
-                allowed_items: evaluate_query(&index, Some(&self.allowed_items), &query.inner)
+                allowed_items: evaluate_query(&index, &self.allowed_items, &query.inner)
             })
         })
     }

@@ -79,11 +79,22 @@ print("Starting Pandas")
 start = time.perf_counter()
 for i in range(ITERATIONS):
     filtered_df = df[
-        (df["age"].between(25, 40)) &
-        (df["score"] > 75.0) &
-        (df["active"]) &
-        (df["country"].isin(["US", "CA"])) &
-        (df["tags"] != "c")
+        (
+            (df["age"].between(35, 60)) &
+            (df["score"] > 85.0) &
+            (df["active"])
+        ) |
+        (
+            (df["country"].isin(["CA", "MX"])) &
+            (df["score"].between(50.0, 75.0)) &
+            (df["tags"] != "b")
+        )
+    ]
+
+    filtered_df = filtered_df[
+        (filtered_df["group"] != "guest") &
+        (filtered_df["age"] < 65) &
+        (filtered_df["country"] != "US")
     ]
 
 duration_df = time.perf_counter() - start
@@ -102,12 +113,21 @@ print("Starting index")
 start = time.perf_counter()
 for i in range(ITERATIONS):
     query = Q.and_(
-        Q.ge("age", 25),
-        Q.le("age", 40),
-        Q.gt("score", 75.0),
-        Q.eq("active", True),
-        Q.in_("country", ["US", "CA"]),
-        Q.ne("tags", "c"),
+        Q.or_(
+            Q.and_(
+                Q.bt("age", 35, 60),
+                Q.gt("score", 85.0),
+                Q.eq("active", True)
+            ),
+            Q.and_(
+                Q.in_("country", ["CA", "MX"]),
+                Q.bt("score", 50.0, 75.0),
+                Q.ne("tags", "b")
+            )
+        ),
+        Q.ne("group", "guest"),
+        Q.lt("age", 65),
+        Q.ne("country", "US")
     )
     result = index.reduced_query(query)
 #    filtered_ix = index.reduced(b = 2, a = 1000)

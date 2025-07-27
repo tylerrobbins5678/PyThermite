@@ -106,19 +106,21 @@ impl QueryMap {
 
 impl QueryMap {
 
-    pub fn gt(&self, val: &RustCastValue) -> Bitmap {
+    pub fn gt(&self, val: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
         // strictly greater than
         match val {
             RustCastValue::Int(i) => {
                 self.num_ordered.range_query(
                     Bound::Excluded(&Key::Int(*i)),
-                    Bound::Unbounded
+                    Bound::Unbounded,
+                    all_valid
                 )
             }
             RustCastValue::Float(f) => {
                 self.num_ordered.range_query(
                     Bound::Excluded(&Key::FloatOrdered(OrderedFloat(*f))),
-                    Bound::Unbounded
+                    Bound::Unbounded,
+                    all_valid
                 )
             }
             RustCastValue::Str(f) => {
@@ -135,19 +137,21 @@ impl QueryMap {
         }
     }
 
-    pub fn ge(&self, val: &RustCastValue) -> Bitmap {
+    pub fn ge(&self, val: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
         // strictly greater than
         match val {
             RustCastValue::Int(i) => {
                 self.num_ordered.range_query(
                     Bound::Included(&Key::Int(*i)),
-                    Bound::Unbounded
+                    Bound::Unbounded,
+                    all_valid
                 )
             }
             RustCastValue::Float(f) => {
                 self.num_ordered.range_query(
                     Bound::Included(&Key::FloatOrdered(OrderedFloat(*f))),
-                    Bound::Unbounded
+                    Bound::Unbounded,
+                    all_valid
                 )
             }
             RustCastValue::Str(f) => {
@@ -164,18 +168,20 @@ impl QueryMap {
         }
     }
 
-    pub fn lt(&self, val: &RustCastValue) -> Bitmap {
+    pub fn lt(&self, val: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
         match val {
             RustCastValue::Int(i) => {
                 self.num_ordered.range_query(
                     Bound::Unbounded,
-                    Bound::Excluded(&Key::Int(*i))
+                    Bound::Excluded(&Key::Int(*i)),
+                    all_valid
                 )
             }
             RustCastValue::Float(f) => {
                 self.num_ordered.range_query(
                     Bound::Unbounded,
-                    Bound::Excluded(&Key::FloatOrdered(OrderedFloat(*f)))
+                    Bound::Excluded(&Key::FloatOrdered(OrderedFloat(*f))),
+                    all_valid
                 )
             }
             RustCastValue::Str(f) => {
@@ -192,19 +198,21 @@ impl QueryMap {
         }
     }
 
-    pub fn le(&self, val: &RustCastValue) -> Bitmap {
+    pub fn le(&self, val: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
         // strictly greater than
         match val {
             RustCastValue::Int(i) => {
                 self.num_ordered.range_query(
                     Bound::Unbounded,
-                    Bound::Included(&Key::Int(*i))
+                    Bound::Included(&Key::Int(*i)),
+                    all_valid
                 )
             }
             RustCastValue::Float(f) => {
                 self.num_ordered.range_query(
                     Bound::Unbounded,
-                    Bound::Included(&Key::FloatOrdered(OrderedFloat(*f)))
+                    Bound::Included(&Key::FloatOrdered(OrderedFloat(*f))),
+                    all_valid
                 )
             }
             RustCastValue::Str(f) => {
@@ -219,6 +227,28 @@ impl QueryMap {
                 Bitmap::new()
             }
         }
+    }
+
+    pub fn bt(&self, lower: &RustCastValue, upper: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
+        let low_range = match lower {
+            RustCastValue::Int(i) => Key::Int(*i),
+            RustCastValue::Float(f) => Key::FloatOrdered(OrderedFloat(*f)),
+            RustCastValue::Str(s) => todo!(),
+            RustCastValue::Unknown => todo!(),
+        };
+
+        let upper_range = match upper {
+            RustCastValue::Int(i) => Key::Int(*i),
+            RustCastValue::Float(f) => Key::FloatOrdered(OrderedFloat(*f)),
+            RustCastValue::Str(s) => todo!(),
+            RustCastValue::Unknown => todo!(),
+        };
+
+        self.num_ordered.range_query(
+            Bound::Included(&low_range),
+            Bound::Included(&upper_range),
+            all_valid
+        )
     }
 
     pub fn eq(&self, val: &PyValue) -> Bitmap {
@@ -302,6 +332,7 @@ pub enum QueryExpr {
     Ge(String, PyValue),
     Lt(String, PyValue),
     Le(String, PyValue),
+    Bt(String, PyValue, PyValue),
     In(String, Vec<PyValue>),
     Not(Box<QueryExpr>),
     And(Vec<QueryExpr>),
@@ -352,6 +383,13 @@ impl PyQueryExpr {
     }
 
     #[staticmethod]
+    pub fn bt(attr: String, lower: PyObject, upper: PyObject) -> Self {
+        Self {
+            inner: QueryExpr::Bt(attr, PyValue::new(&lower), PyValue::new(&upper)),
+        }
+    }
+
+    #[staticmethod]
     pub fn lt(attr: String, value: PyObject) -> Self {
         Self {
             inner: QueryExpr::Lt(attr, PyValue::new(&value)),
@@ -396,7 +434,7 @@ impl PyQueryExpr {
 
 pub fn evaluate_query(
     index: &HashMap<String, QueryMap>,
-    all_valid: Option<&Bitmap>,
+    all_valid: &Bitmap,
     expr: &QueryExpr,
 ) -> Bitmap {
     match expr {
@@ -420,6 +458,7 @@ pub fn evaluate_query(
                 for v in values {
                     if let Some(bm) = qm.get(v) {
                         result.or_inplace(bm);
+                        result.and_inplace(all_valid);
                     }
                 }
             }
@@ -427,57 +466,54 @@ pub fn evaluate_query(
         }
         QueryExpr::Gt(attr, value) => {
             if let Some(qm) = index.get(attr) {
-                qm.gt(value.get_primitive())
+                qm.gt(value.get_primitive(), all_valid)
             } else {
                 Bitmap::new()
             }
         }
         QueryExpr::Ge(attr, value) => {
             if let Some(qm) = index.get(attr) {
-                qm.ge(value.get_primitive())
+                qm.ge(value.get_primitive(), all_valid)
             } else {
                 Bitmap::new()
             }
         }
         QueryExpr::Le(attr, value) => {
             if let Some(qm) = index.get(attr) {
-                qm.le(value.get_primitive())
+                qm.le(value.get_primitive(), all_valid)
+            } else {
+                Bitmap::new()
+            }
+        }
+        QueryExpr::Bt(attr, lower, upper) => {
+            if let Some(qm) = index.get(attr) {
+                qm.bt(lower.get_primitive(), upper.get_primitive(), all_valid)
             } else {
                 Bitmap::new()
             }
         }
         QueryExpr::Lt(attr, value) => {
             if let Some(qm) = index.get(attr) {
-                qm.lt(value.get_primitive())
+                qm.lt(value.get_primitive(), all_valid)
             } else {
                 Bitmap::new()
             }
         }
         QueryExpr::Not(inner) => {
             let inner_bm = evaluate_query(index, all_valid, inner);
-            match all_valid{
-                Some(valid) => valid - &inner_bm,
-                None => inner_bm,
-            }
+                all_valid - &inner_bm
         }
         QueryExpr::And(exprs) => {
-            let mut result = None;
+            let mut result = all_valid.clone();
 
             for expr in exprs {
-                let bm = evaluate_query(index, result.as_ref().or(all_valid), expr);
-
-                match &mut result {
-                    Some(r) => {
-                        r.and_inplace(&bm);
-                        if r.is_empty() {
-                            break; // early termination
-                        }
-                    }
-                    None => result = Some(bm),
+                let bm = evaluate_query(index, &result, expr);
+                result.and_inplace(&bm);
+                if result.is_empty() {
+                    break; // early termination
                 }
             }
-
-            result.unwrap_or_else(Bitmap::new)
+            result
         }
         QueryExpr::Or(exprs) => {
             let mut result = Bitmap::new();

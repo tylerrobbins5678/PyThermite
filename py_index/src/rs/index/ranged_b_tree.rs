@@ -3,7 +3,7 @@ use std::ops::Bound;
 use std::ptr;
 use croaring::Bitmap;
 
-const MAX_KEYS: usize = 15;
+const MAX_KEYS: usize = 96;
 const FILL_FACTOR: f64 = 0.9;
 const FULL_KEYS: usize = (MAX_KEYS as f64 * FILL_FACTOR) as usize;
 
@@ -246,8 +246,8 @@ impl BitMapBTree {
         }
     }
 
-    pub fn range_query(&self, lower: Bound<&Key>, upper: Bound<&Key>) -> Bitmap {
-        self.root.query_range(lower, upper)
+    pub fn range_query(&self, lower: Bound<&Key>, upper: Bound<&Key>, allowed: &Bitmap) -> Bitmap {
+        self.root.query_range(lower, upper, allowed)
     }
 
     pub fn debug_print(&self) {
@@ -311,14 +311,14 @@ impl BitMapBTreeNode {
         }
     }
 
-    pub fn query_range(&self, lower: Bound<&Key>, upper: Bound<&Key>) -> Bitmap {
+    pub fn query_range(&self, lower: Bound<&Key>, upper: Bound<&Key>, allowed: &Bitmap) -> Bitmap {
         match self {
             BitMapBTreeNode::Leaf(leaf) => {
-                leaf.query_range(lower, upper)
+                leaf.query_range(lower, upper, allowed)
             }
 
             BitMapBTreeNode::Internal(internal) => {
-                internal.query_range(lower, upper)
+                internal.query_range(lower, upper, allowed)
             }
         }
     }
@@ -687,7 +687,7 @@ impl InternalNode {
         Bitmap::fast_or(&bitmap_refs)
     }
 
-    pub fn query_range(&self, lower: Bound<&Key>, upper: Bound<&Key>) -> Bitmap{
+    pub fn query_range(&self, lower: Bound<&Key>, upper: Bound<&Key>, allowed: &Bitmap) -> Bitmap{
         let mut res = Bitmap::new();
 
         let low_idx = match lower {
@@ -704,21 +704,21 @@ impl InternalNode {
 
         // Recurse into left boundary child
         if let Some(left_child) = &self.children[self.offset + low_idx] {
-            let child_bitmap = left_child.query_range(lower, upper);
+            let child_bitmap = left_child.query_range(lower, upper, allowed);
             res.or_inplace(&child_bitmap);
         }
 
         // Include fully-contained children bitmaps in the middle
         for i in (low_idx + 1)..high_idx {
             if let Some(bm) = &self.children_bitmaps[self.offset + i] {
-                res.or_inplace(bm);
+                res.or_inplace(&bm.and(allowed));
             }
         }
 
         // Recurse into right boundary child (only if different from left)
         if high_idx != low_idx {
             if let Some(right_child) = &self.children[self.offset + high_idx] {
-                let child_bitmap = right_child.query_range(lower, upper);
+                let child_bitmap = right_child.query_range(lower, upper, allowed);
                 res.or_inplace(&child_bitmap);
             }
         }
@@ -874,7 +874,7 @@ impl LeafNode {
     }
 
 
-    pub fn query_range(&self, lower: Bound<&Key>, upper: Bound<&Key>) -> Bitmap{
+    pub fn query_range(&self, lower: Bound<&Key>, upper: Bound<&Key>, allowed: &Bitmap) -> Bitmap{
         let mut res = Bitmap::new();
         
         let mut i = 0;
@@ -913,8 +913,9 @@ impl LeafNode {
             
             i += 1;
         }
-
+        res.and_inplace(allowed);
         res
+
     }
 
 
