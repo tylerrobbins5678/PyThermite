@@ -1,9 +1,10 @@
 
-use std::{collections::HashMap, sync::{Arc, RwLock}, time::Instant, vec};
+use std::{sync::{Arc, RwLock}, time::Instant, vec};
 use croaring::Bitmap;
 use pyo3::prelude::*;
+use rustc_hash::FxHashMap;
 
-use crate::index::{filtered_index::FilteredIndex, query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, PyQueryExpr, QueryMap}, Indexable};
+use crate::index::{filtered_index::FilteredIndex, query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, PyQueryExpr, QueryMap}, HybridSet, Indexable};
 
 use super::stored_item::StoredItem;
 use super::value::PyValue;
@@ -12,7 +13,7 @@ use super::value::PyValue;
 #[pyclass]
 #[derive(Clone)]
 pub struct Index{
-    pub index: Arc<RwLock<HashMap<String, QueryMap>>>,
+    pub index: Arc<RwLock<FxHashMap<String, Box<QueryMap>>>>,
     pub items: Arc<RwLock<Vec<Option<Arc<StoredItem>>>>>,
     pub allowed_items: Bitmap,
 }
@@ -23,7 +24,7 @@ impl Index{
     #[new]
     pub fn new() -> Self {
         Self {
-            index: Arc::new(RwLock::new(HashMap::new())),
+            index: Arc::new(RwLock::new(FxHashMap::default())),
             items: Arc::new(RwLock::new(vec![])),
             allowed_items: Bitmap::new()
         }
@@ -42,22 +43,16 @@ impl Index{
 
     pub fn add_object_many(&mut self, py: Python, objs: Vec<Indexable>) -> PyResult<()> {
 
-        let start = Instant::now();
-
         py.allow_threads(||{
             let mut index= self.index.write().unwrap();
             for py_ref in &objs{
                 self.allowed_items.add(py_ref.id);
                 for (key, value) in unsafe { py_ref.py_values.map_ref() }.iter(){
                     if key.starts_with("_"){continue;}
-                    _add_index(&mut index, py_ref.id , key.to_string(), value.clone());
+                    _add_index(&mut index, py_ref.id , key.to_string(), value);
                 }
             }
         });
-
-        eprintln!("Time to build index {:?}", start.elapsed());
-
-        let start = Instant::now();
 
         let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<Option<Arc<StoredItem>>>> = self.items.write().unwrap();
         let slf = Arc::new(self.clone());
@@ -75,8 +70,6 @@ impl Index{
             items_writer[idx] = Some(Arc::clone(&stored_item));
         }
 
-        eprintln!("Time to extract py objects {:?}", start.elapsed());
-
         Ok(())
     }
 
@@ -85,10 +78,10 @@ impl Index{
         let py_obj: Py<Indexable> = py_ref.clone().into_pyobject(py)?.unbind();
         let py_obj_arc = Arc::new(py_obj);
 
-        let mut py_val_hashmap: HashMap<String, PyValue> = HashMap::new();
+        let mut py_val_FxHashMap: FxHashMap<String, PyValue> = FxHashMap::default();
         for (key, value) in unsafe { py_ref.py_values.map_ref() }.iter(){
             if key.starts_with("_"){continue;}
-            py_val_hashmap.insert(key.clone(), value.clone());
+            py_val_FxHashMap.insert(key.clone(), value.clone());
         }
 
         let idx = py_ref.id;
@@ -106,9 +99,9 @@ impl Index{
             }
 
             let mut index= self.index.write().unwrap();
-            for (key, value) in py_val_hashmap.iter() {
+            for (key, value) in py_val_FxHashMap.iter() {
                 if key.starts_with("_"){continue;}
-                _add_index(&mut index, idx, key.clone(), value.clone());
+                _add_index(&mut index, idx, key.clone(), value);
             }
 
         });
@@ -122,17 +115,18 @@ impl Index{
     pub fn reduce(
         &mut self,
         py: Python,
-        kwargs: Option<HashMap<String, Py<PyAny>>>,
+        kwargs: Option<FxHashMap<String, Py<PyAny>>>,
     ) -> PyResult<()> {
         let query = kwargs_to_hash_query(py, &kwargs.unwrap_or_default())?;
         py.allow_threads(|| {
             let mut index = self.index.write().unwrap();
 
             let survivors = filter_index_by_hashes(&index, &query);
+            let survivors = HybridSet::Large(survivors);
 
             // Step 1: Remove items not in survivors
             for attr_map in index.values_mut() {
-                attr_map.remove_bitmap(&survivors);
+                attr_map.remove(&survivors);
             }
 
             // Step 2: Add any missing entries for survivors
@@ -148,8 +142,8 @@ impl Index{
                     }
                     index
                         .entry(attr.clone())
-                        .or_insert_with(QueryMap::new)
-                        .insert(val.clone(), idx);
+                        .or_insert_with(|| Box::new(QueryMap::new()))
+                        .insert(&val, idx);
                 }
             }
 
@@ -166,7 +160,7 @@ impl Index{
     pub fn reduced(
         &self,
         py: Python,
-        kwargs: Option<HashMap<String, Py<PyAny>>>,
+        kwargs: Option<FxHashMap<String, Py<PyAny>>>,
     ) -> PyResult<FilteredIndex> {
         let query = kwargs_to_hash_query(py, &kwargs.unwrap_or_default())?;
         py.allow_threads(move || {
@@ -198,7 +192,7 @@ impl Index{
     pub fn get_by_attribute(
         &self,
         py: Python,
-        kwargs: Option<HashMap<String, Py<PyAny>>>,
+        kwargs: Option<FxHashMap<String, Py<PyAny>>>,
     ) -> PyResult<Vec<Py<Indexable>>> {
 
         let query = kwargs_to_hash_query(py, &kwargs.unwrap_or_default())?;
@@ -214,14 +208,14 @@ impl Index{
         })
     }
 
-//    pub fn group_by(&self, py:Python, attr: &str) -> HashMap<PyValue, HashSet<StoredItem>> {
+//    pub fn group_by(&self, py:Python, attr: &str) -> FxHashMap<PyValue, HashSet<StoredItem>> {
 //        py.allow_threads(||{
 //            let index = self.index.read().unwrap();
 //            let attr_map = match index.get(attr){
 //                Some(map) => map,
-//                None => &HashMap::new(),
+//                None => &FxHashMap::new(),
 //            };
-//            let mut result: HashMap<PyValue, HashSet<StoredItem>> = HashMap::new();
+//            let mut result: FxHashMap<PyValue, HashSet<StoredItem>> = FxHashMap::new();
 //    
 //            for (py_val, items) in attr_map {
 //                let obj_set = (*items).iter().map(|arc| (**arc).clone()).collect();
@@ -231,17 +225,17 @@ impl Index{
 //        })
 //    }
 
-//    fn group_by_count(&self, py:Python, attr: &str) -> HashMap<PyValue, usize> {
+//    fn group_by_count(&self, py:Python, attr: &str) -> FxHashMap<PyValue, usize> {
 //        py.allow_threads(||{
 //            let index = self.index.read().unwrap();
-//            let mut result: HashMap<PyValue, usize> = HashMap::new();
+//            let mut result: FxHashMap<PyValue, usize> = FxHashMap::new();
 //            if let Some(attr_index) = index.get(attr) {
 //                for (value, items) in attr_index {
 //                    result.insert(value.clone(), items.len());
 //                }
 //                result
 //            } else {
-//                HashMap::new()
+//                FxHashMap::new()
 //            }
 //        })
 //    }
@@ -250,7 +244,7 @@ impl Index{
 impl Index{
     pub fn update_index(
         &self,
-        mut index: std::sync::RwLockWriteGuard<'_, HashMap<String, QueryMap>>,
+        mut index: std::sync::RwLockWriteGuard<'_, FxHashMap<String, Box<QueryMap>>>,
         attr: String, 
         old_pv: &PyValue,
         new_val: &PyObject,
@@ -262,7 +256,7 @@ impl Index{
         let new_pv = PyValue::new(new_val);
 
         _remove_index(&mut index, item_id, &attr, old_pv.clone());
-        _add_index(&mut index, item_id, attr, new_pv);
+        _add_index(&mut index, item_id, attr, &new_pv);
 
         Ok(())
     }
@@ -291,20 +285,22 @@ fn union_with(index: &Index, other: &Index) -> PyResult<()> {
 
 
 pub fn _add_index(
-    index: &mut std::sync::RwLockWriteGuard<'_, HashMap<String, QueryMap>>, 
-    obj_id: u32, 
+    index: &mut std::sync::RwLockWriteGuard<'_, FxHashMap<String, Box<QueryMap>>>, 
+    obj_id: u32,
     attr: String,
-    value: PyValue
+    value: &PyValue
 ){
-   
-    let q_map: &mut QueryMap = index.entry(attr.clone())
-        .or_insert_with(|| QueryMap::new());
-
-    q_map.insert(value, obj_id);
+    if let Some(qmap) = index.get_mut(&attr) {
+        qmap.insert(value, obj_id);
+    } else {
+        let mut qmap = QueryMap::new();
+        qmap.insert(value, obj_id);
+        index.insert(attr, Box::new(qmap));
+    }
 }
 
 fn _remove_index(
-    index: &mut std::sync::RwLockWriteGuard<'_, HashMap<String, QueryMap>>, 
+    index: &mut std::sync::RwLockWriteGuard<'_, FxHashMap<String, Box<QueryMap>>>,
     idx: u32,
     attr: &str, 
     py_value: PyValue

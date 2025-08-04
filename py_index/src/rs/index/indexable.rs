@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::hash::{Hash, Hasher};
@@ -35,7 +36,7 @@ impl Indexable{
         Self {
             meta: Arc::new(Mutex::new(vec![])),
             id: GLOBAL_ID_COUNTER.fetch_add(1, Ordering::Relaxed) as u32,
-            py_values: Arc::new(UnsafePyValues::new(HashMap::new()))
+            py_values: Arc::new(UnsafePyValues::new(FxHashMap::default()))
         }
     }
 

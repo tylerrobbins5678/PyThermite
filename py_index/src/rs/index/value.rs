@@ -32,7 +32,10 @@ impl PyValue {
                 RustCastValue::Unknown
             };
 
-            let hash = bound.hash().expect("could not hash") as u64;
+            let hash = match bound.hash() {
+                Ok(i) => i as u64,
+                Err(_) => 0,
+            };
 
             Self {
                 obj: Arc::new(obj.clone_ref(py)),

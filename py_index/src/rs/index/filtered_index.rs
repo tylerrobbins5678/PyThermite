@@ -1,7 +1,8 @@
-use std::{collections::HashMap, sync::{Arc, RwLock}};
+use std::{sync::{Arc, RwLock}};
 
 use croaring::Bitmap;
 use pyo3::{pyclass, pymethods, Py, PyAny, PyResult, Python};
+use rustc_hash::FxHashMap;
 
 use crate::index::{query::{filter_index_by_hashes, kwargs_to_hash_query, QueryMap}, stored_item::StoredItem, value::PyValue, Index, Indexable};
 
@@ -10,7 +11,7 @@ use crate::index::{query::{filter_index_by_hashes, kwargs_to_hash_query, QueryMa
 #[pyclass]
 #[derive(Clone)]
 pub struct FilteredIndex {
-    pub index: Arc<RwLock<HashMap<String, QueryMap>>>,
+    pub index: Arc<RwLock<FxHashMap<String, Box<QueryMap>>>>,
     pub items: Arc<RwLock<Vec<Option<Arc<StoredItem>>>>>,
     pub allowed_items: Bitmap,
 }
@@ -23,7 +24,7 @@ impl FilteredIndex{
     pub fn reduced(
         &self,
         py: Python,
-        kwargs: Option<HashMap<String, Py<PyAny>>>,
+        kwargs: Option<FxHashMap<String, Py<PyAny>>>,
     ) -> PyResult<FilteredIndex> {
         let query = kwargs_to_hash_query(py, &kwargs.unwrap_or_default())?;
         py.allow_threads(|| {
@@ -46,7 +47,7 @@ impl FilteredIndex{
         let max_size = self.allowed_items.maximum().unwrap_or(0);
 
         let res_index = Index{
-            index: Arc::new(RwLock::new(HashMap::new())),
+            index: Arc::new(RwLock::new(FxHashMap::default())),
             items: Arc::new(RwLock::new(Vec::with_capacity(max_size as usize))),
             allowed_items: self.allowed_items.clone()
         };
@@ -67,8 +68,8 @@ impl FilteredIndex{
             for (attr, val) in attr_map.iter() {
                 new_index
                     .entry(attr.clone())
-                    .or_insert_with(QueryMap::new)
-                    .insert(val.clone(), idx);
+                    .or_insert_with(|| Box::new(QueryMap::new()))
+                    .insert(val, idx);
             }
         }
 

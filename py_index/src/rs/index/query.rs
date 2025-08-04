@@ -1,14 +1,15 @@
-use std::{cell::UnsafeCell, collections::{hash_map::{Iter, ValuesMut}, BTreeMap, HashMap, HashSet}, ops::{Bound, Range}, sync::{Arc, Weak}};
+use std::{cell::UnsafeCell, collections::{hash_map::{Iter, ValuesMut}, BTreeMap, HashSet}, ops::{Bound, Range}, sync::{Arc, Weak}};
 
-use croaring::{bitmap, Bitmap};
+use rustc_hash::FxHashMap;
+use croaring::Bitmap;
 use ordered_float::OrderedFloat;
 use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyString}, Py, PyAny, PyObject, PyResult, Python};
 
-use crate::index::{value::{PyValue, RustCastValue}, BitMapBTree, Key};
+use crate::index::{value::{PyValue, RustCastValue}, BitMapBTree, HybridSet, Key};
 
 #[derive(Default)]
 pub struct QueryMap {
-    exact: HashMap<PyValue, Arc<UnsafeCell<Bitmap>>>,
+    exact: FxHashMap<PyValue, HybridSet>,
     num_ordered: BitMapBTree,
     str_ordered: BTreeMap<String, Arc<UnsafeCell<Bitmap>>>,
 }
@@ -19,20 +20,24 @@ unsafe impl Sync for QueryMap {}
 impl QueryMap {
     pub fn new() -> Self{
         Self{
-            exact: HashMap::new(),
+            exact: FxHashMap::default(),
             num_ordered: BitMapBTree::new(),
             str_ordered: BTreeMap::new()
         }
     }
 
-    pub fn insert(&mut self, value: PyValue, obj_id: u32){
-        let val_entry =  self.exact.entry(value.clone())
-            .or_insert_with(|| Arc::new(UnsafeCell::new(Bitmap::new())));
+    pub fn insert(&mut self, value: &PyValue, obj_id: u32){
 
-        unsafe { &mut *val_entry.get() }.add(obj_id);
-
+        
+        if let Some(existing) = self.exact.get_mut(&value) {
+            existing.add(obj_id);
+        } else {
+            // lazily create only if needed
+            let hybrid_set = HybridSet::of(&[obj_id]);
+            self.exact.insert(value.clone(), hybrid_set);
+        }
+        
         // Insert into the right ordered map based on primitive type
-
         match &value.get_primitive() {
             RustCastValue::Int(i) => {
                 self.num_ordered.insert(Key::Int(*i), obj_id);
@@ -41,8 +46,9 @@ impl QueryMap {
                 self.num_ordered.insert(Key::FloatOrdered(OrderedFloat(*f)), obj_id);
             }
             RustCastValue::Str(s) => {
-                let entry = self.str_ordered.entry(s.clone())
-                    .or_insert_with(|| val_entry.clone());
+//                let entry = self.str_ordered.entry(s.clone())
+//                    .or_insert_with(|| Arc::new(UnsafeCell::new(Bitmap::new())));
+//                unsafe { &mut *entry.get() }.add(obj_id);
             }
             RustCastValue::Unknown => {
                 // Optionally handle unknown types here or ignore
@@ -51,17 +57,15 @@ impl QueryMap {
     }
 
     pub fn check_prune(&mut self, val: &PyValue) {
-        if unsafe { &mut *self.exact[val].get() }.is_empty(){
+        if self.exact[val].is_empty(){
             self.exact.remove(val);
         }
     }
 
     pub fn merge(&mut self, other: &Self) {
-        for (val, bm) in &self.exact{
+        for (val, bm) in self.exact.iter_mut() {
             if let Some(other) = other.get(&val){
-                unsafe {
-                    (&mut *bm.get()).or_inplace(other);
-                }
+                bm.or_inplace(other);
             }
         }
     }
@@ -74,25 +78,34 @@ impl QueryMap {
         self.exact.contains_key(key)
     }
 
-    pub fn get(&self, key: &PyValue) -> Option<&Bitmap>{
-        if let Some(cell) = self.exact.get(&key) {
-            unsafe {
-                Some(&*cell.get())
-            }
-        } else {
-            None
-        }
+    pub fn get(&self, key: &PyValue) -> Option<&HybridSet>{
+        self.exact.get(&key)
+    }
+
+    pub fn get_mut(&mut self, key: &PyValue) -> Option<&mut HybridSet> {
+        self.exact.get_mut(&key)
     }
 
     pub fn remove_id(&mut self, py_value: &PyValue, idx: u32) {
-        if let Some(bm) = self.exact.get_mut(py_value) {
-            unsafe { &mut *bm.get() } .remove(idx);
+        if let Some(hybrid_set) = self.exact.get_mut(py_value) {
+            hybrid_set.remove(idx);
         }
+        let key = match &py_value.get_primitive(){
+            RustCastValue::Int(i) => {
+                Key::Int(*i)
+            }
+            RustCastValue::Float(f) => {
+                Key::FloatOrdered(OrderedFloat(*f))
+            }
+            RustCastValue::Str(_) => todo!(),
+            RustCastValue::Unknown => todo!(),
+        };
+        self.num_ordered.remove(key, idx);
     }
 
-    pub fn remove_bitmap(&mut self, filter_bm: &Bitmap){
+    pub fn remove(&mut self, filter_bm: &HybridSet){
         for (_, bm) in self.exact.iter_mut() {
-            unsafe { &mut *bm.get() }.and_inplace(filter_bm);
+            bm.and_inplace(filter_bm);
         }
     }
 
@@ -253,7 +266,7 @@ impl QueryMap {
 
     pub fn eq(&self, val: &PyValue) -> Bitmap {
         if let Some(res) = self.exact.get(val){
-            unsafe { (*res.get()).clone() }
+            res.as_bitmap()
         } else {
             Bitmap::new()
         }
@@ -262,34 +275,34 @@ impl QueryMap {
 }
 
 pub struct QueryMapIter<'a> {
-    exact_iter: std::collections::hash_map::Iter<'a, PyValue, Arc<UnsafeCell<Bitmap>>>,
+    exact_iter: std::collections::hash_map::Iter<'a, PyValue, HybridSet>,
 }
 
 impl<'a> Iterator for QueryMapIter<'a> {
-    type Item = (&'a PyValue, &'a Bitmap);
+    type Item = (&'a PyValue, &'a HybridSet);
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some((k, v)) = self.exact_iter.next() {
-            return Some((k, unsafe {&mut *v.get()}));
+            return Some((k, v));
         }
         None
     }
 }
 
 pub fn filter_index_by_hashes(
-    index: &HashMap<String, QueryMap>,
-    query: &HashMap<String, HashSet<PyValue>>,
+    index: &FxHashMap<String, Box<QueryMap>>,
+    query: &FxHashMap<String, HashSet<PyValue>>,
 ) -> Bitmap {
     let mut sets_iter: Bitmap = Bitmap::new();
     let mut first = true;
-    let eq = QueryMap::new();
+    let eq = Box::new(QueryMap::new());
 
     let mut sorted_query: Vec<_> = query.iter().collect();
     sorted_query.sort_by_key(|(attr, hashes)| {
         index.get(*attr)
             .map(|attr_map| {
                 hashes.iter()
-                    .map(|h| attr_map.exact.get(h).map_or(0, |set| unsafe { &*set.get() }.cardinality()))
+                    .map(|h| attr_map.exact.get(h).map_or(0, |set| set.cardinality()))
                     .sum::<u64>()
             })
             .unwrap_or(0)
@@ -304,7 +317,7 @@ pub fn filter_index_by_hashes(
         
         for h in allowed_hashes {
             if let Some(matched) = attr_map.get(h) {
-                per_attr_match |= matched;
+                per_attr_match |= matched.as_bitmap();
             }
         }
 
@@ -433,7 +446,7 @@ impl PyQueryExpr {
 }
 
 pub fn evaluate_query(
-    index: &HashMap<String, QueryMap>,
+    index: &FxHashMap<String, Box<QueryMap>>,
     all_valid: &Bitmap,
     expr: &QueryExpr,
 ) -> Bitmap {
@@ -457,7 +470,7 @@ pub fn evaluate_query(
             if let Some(qm) = index.get(attr) {
                 for v in values {
                     if let Some(bm) = qm.get(v) {
-                        result.or_inplace(bm);
+                        result.or_inplace(&bm.as_bitmap());
                         result.and_inplace(all_valid);
                     }
                 }
@@ -528,9 +541,9 @@ pub fn evaluate_query(
 
 pub fn kwargs_to_hash_query(
     py: Python,
-    kwargs: &HashMap<String, Py<PyAny>>,
-) -> PyResult<HashMap<String, HashSet<PyValue>>> {
-    let mut query = HashMap::new();
+    kwargs: &FxHashMap<String, Py<PyAny>>,
+) -> PyResult<FxHashMap<String, HashSet<PyValue>>> {
+    let mut query = FxHashMap::default();
 
     for (attr, py_val) in kwargs {
         let val_ref = py_val.clone_ref(py).into_bound(py);
