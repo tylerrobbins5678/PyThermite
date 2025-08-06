@@ -40,29 +40,29 @@ impl Indexable{
         }
     }
 
-    fn __setattr__<'py>(&mut self, py: Python, name: &str, value: Bound<'py, PyAny>) -> PyResult<()> {
+    fn __setattr__<'py>(&mut self, py: Python, name: String, value: Bound<'py, PyAny>) -> PyResult<()> {
 
         let val: PyValue = PyValue::new(value);
 
-        if let Some(old_val) = self.py_values.get(name){
+        if let Some(old_val) = self.py_values.get(&name){
 
             py.allow_threads(||{
                 // Acquire write locks and pair with original Arc
                 for ind in self.meta.iter() {
                     let arc_index = ind.index.clone();
                     let guard = ind.index.index.write().unwrap();
-                    arc_index.update_index(guard, name, old_val, &val, self.id);
+                    arc_index.update_index(guard, &name, old_val, &val, self.id);
                 }
             });
         }
 
         // update value
-        self.py_values.insert(name.to_string(), val);
+        self.py_values.insert(name, val);
 
         Ok(())
     }
 
-    fn __getattr__(&self, py: Python, name: &str) -> PyResult<&Py<PyAny>> {
+    fn __getattr__(&self, py: Python, name: String) -> PyResult<&Py<PyAny>> {
 
         // should alreday be sorted
         // self.meta.sort_by_key(|ind| Arc::as_ptr(&ind.index) as usize);
@@ -76,7 +76,7 @@ impl Indexable{
                 index_read_locks.push((arc_index, guard));
             }
 
-            match self.py_values.get(name) {
+            match self.py_values.get(&name) {
                 Some(value) => Ok(value.get_obj()),
                 None => Err(pyo3::exceptions::PyAttributeError::new_err(format!(
                     "Attribute '{}' not found on RUST side",
