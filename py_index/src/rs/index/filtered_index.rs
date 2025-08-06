@@ -1,7 +1,7 @@
 use std::{sync::{Arc, RwLock}};
 
 use croaring::Bitmap;
-use pyo3::{pyclass, pymethods, Py, PyAny, PyResult, Python};
+use pyo3::{pyclass, pymethods, Bound, IntoPyObject, Py, PyAny, PyResult, Python};
 use rustc_hash::FxHashMap;
 
 use crate::index::{query::{filter_index_by_hashes, kwargs_to_hash_query, QueryMap}, stored_item::StoredItem, value::PyValue, Index, Indexable};
@@ -21,12 +21,12 @@ pub struct FilteredIndex {
 impl FilteredIndex{
 
     #[pyo3(signature = (**kwargs))]
-    pub fn reduced(
+    pub fn reduced<'py>(
         &self,
         py: Python,
-        kwargs: Option<FxHashMap<String, Py<PyAny>>>,
+        kwargs: Option<FxHashMap<String, pyo3::Bound<'py, PyAny>>>,
     ) -> PyResult<FilteredIndex> {
-        let query = kwargs_to_hash_query(py, &kwargs.unwrap_or_default())?;
+        let query = kwargs_to_hash_query(kwargs.unwrap_or_default())?;
         py.allow_threads(|| {
             let index = self.index.read().unwrap();
             Ok(FilteredIndex {
@@ -41,7 +41,7 @@ impl FilteredIndex{
         self.get_from_indexes(py, &self.allowed_items)
     }
 
-    pub fn rebase(&self) -> PyResult<Index> {
+    pub fn rebase(&self, py: Python) -> PyResult<Index> {
 
         let items = self.items.read().unwrap();
         let max_size = self.allowed_items.maximum().unwrap_or(0);
@@ -60,12 +60,13 @@ impl FilteredIndex{
         
         for idx in self.allowed_items.iter() {
             let item = items[idx as usize].as_ref().unwrap();
-            item.item.add_index(res_index_arc.clone());
+
+            let mut py_item = item.py_item.bind(py).borrow_mut();
+            py_item.add_index(res_index_arc.clone());
 
             new_items[idx as usize] = Some(item.clone());
-            let attr_map = unsafe { item.item.py_values.map_ref() };
             
-            for (attr, val) in attr_map.iter() {
+            for (attr, val) in py_item.py_values.iter() {
                 new_index
                     .entry(attr.clone())
                     .or_insert_with(|| Box::new(QueryMap::new()))

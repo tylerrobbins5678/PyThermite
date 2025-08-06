@@ -19,8 +19,8 @@ struct IndexMeta{
 
 #[pyclass(subclass)]
 pub struct Indexable{
-    meta: Arc<Mutex<Vec<IndexMeta>>>,
-    pub py_values: Arc<UnsafePyValues>,
+    meta: Vec<IndexMeta>,
+    pub py_values: FxHashMap<String, PyValue>,
     pub id: u32
 }
 
@@ -34,77 +34,62 @@ impl Indexable{
         _args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>
     ) -> Self {
         Self {
-            meta: Arc::new(Mutex::new(vec![])),
+            meta: vec![],
             id: GLOBAL_ID_COUNTER.fetch_add(1, Ordering::Relaxed) as u32,
-            py_values: Arc::new(UnsafePyValues::new(FxHashMap::default()))
+            py_values: FxHashMap::default()
         }
     }
 
-    fn __setattr__(&mut self, py: Python, name: String, value: Py<PyAny>) -> PyResult<()> {
+    fn __setattr__<'py>(&mut self, py: Python, name: &str, value: Bound<'py, PyAny>) -> PyResult<()> {
 
-        let none = py.None(); // owns the Py<PyAny> until end of function
-        py.allow_threads(||{
+        let val: PyValue = PyValue::new(value);
 
-            // Step 1: Collect and sort index references
-            let mut index_refs = self.meta.lock().unwrap();
-            index_refs.sort_by_key(|ind| Arc::as_ptr(&ind.index) as usize);
+        if let Some(old_val) = self.py_values.get(name){
 
-            // Step 2: Acquire write locks and pair with original Arc
-            let mut index_write_locks = Vec::with_capacity(index_refs.len());
-            for ind in index_refs.iter() {
-                let arc_index = ind.index.clone();
-                let guard = ind.index.index.write().unwrap();
-                index_write_locks.push((arc_index, guard));
-            }
+            py.allow_threads(||{
+                // Acquire write locks and pair with original Arc
+                for ind in self.meta.iter() {
+                    let arc_index = ind.index.clone();
+                    let guard = ind.index.index.write().unwrap();
+                    arc_index.update_index(guard, name, old_val, &val, self.id);
+                }
+            });
+        }
 
-            // get value - can be assumes safe since lock is needed to mutate
-            let val_map = unsafe { self.py_values.get_mut() };
-            let old_val = match val_map.get(&name){
-                Some(ov) => ov,
-                _ => &PyValue::new(&none)
-            };
+        // update value
+        self.py_values.insert(name.to_string(), val);
 
-            // update all indexes
-            for (ind, guard) in index_write_locks{
-                ind.update_index(guard, name.clone(), old_val, &value, self.id)?;
-            }
-            // update value
-            val_map.insert(name.clone(), PyValue::new(&value));
-
-            // locks are all released at end of scope
-
-            Ok(())
-        })
+        Ok(())
     }
 
-    fn __getattr__(&self, py: Python, name: &str) -> PyResult<Py<PyAny>> {
+    fn __getattr__(&self, py: Python, name: &str) -> PyResult<&Py<PyAny>> {
 
-        let mut index_refs = self.meta.lock().unwrap();
-        index_refs.sort_by_key(|ind| Arc::as_ptr(&ind.index) as usize);
+        // should alreday be sorted
+        // self.meta.sort_by_key(|ind| Arc::as_ptr(&ind.index) as usize);
 
         // aquire locks to prove nobody is writing
-        let mut index_read_locks = Vec::with_capacity(index_refs.len());
-        for ind in index_refs.iter() {
-            let arc_index = ind.index.clone();
-            let guard = ind.index.index.read().unwrap();
-            index_read_locks.push((arc_index, guard));
-        }
+        py.allow_threads(||{
+            let mut index_read_locks = Vec::with_capacity(self.meta.len());
+            for ind in self.meta.iter() {
+                let arc_index = ind.index.clone();
+                let guard = ind.index.index.read().unwrap();
+                index_read_locks.push((arc_index, guard));
+            }
 
-        let val_map = unsafe { self.py_values.map_ref() };
-        match val_map.get(name) {
-            Some(value) => Ok(value.get_obj().clone_ref(py)),
-            None => Err(pyo3::exceptions::PyAttributeError::new_err(format!(
-                "Attribute '{}' not found on RUST side",
-                name
-            ))),
-        }
+            match self.py_values.get(name) {
+                Some(value) => Ok(value.get_obj()),
+                None => Err(pyo3::exceptions::PyAttributeError::new_err(format!(
+                    "Attribute '{}' not found on RUST side",
+                    name
+                ))),
+            }
+        })
     }
 
     fn __dir__(py_ref: PyRef<Self>, py: Python<'_>) -> PyResult<Py<PyList>> {
         let mut names: Vec<PyObject> = vec![];
         {
-            let readlock = unsafe { py_ref.py_values.map_ref() };
-            for key in readlock.keys() {
+            for key in py_ref.py_values.keys() {
                 names.push(PyString::new(py, key).into_pyobject(py)?.unbind().into_any());
             }
         }
@@ -124,30 +109,20 @@ impl Indexable{
     }
 
     fn __repr__(&self) -> PyResult<String> {
-        let readlock = unsafe { self.py_values.map_ref() };
-        Ok(format!("<MyClass with {} attributes>", readlock.len()))
+        Ok(format!("<MyClass with {} attributes>", self.py_values.len()))
     }
 }
 
 impl Indexable {
-    pub fn add_index(&self, index: Arc<Index>) {
-        self.meta.lock().unwrap().push(IndexMeta {
+    pub fn add_index(&mut self, index: Arc<Index>) {
+        self.meta.push(IndexMeta {
             index: index,
         });
+        self.meta.sort_by_key(|ind| Arc::as_ptr(&ind.index) as usize);
     }
 
     pub fn remove_index(&mut self, index: Arc<Index>) {
-        self.meta.lock().unwrap().retain(|m| !Arc::ptr_eq(&m.index, &index));
-    }
-}
-
-impl Clone for Indexable {
-    fn clone(&self) -> Self {
-        Indexable {
-            meta: self.meta.clone(),
-            id: self.id,
-            py_values: self.py_values.clone()
-        }
+        self.meta.retain(|m| !Arc::ptr_eq(&m.index, &index));
     }
 }
 

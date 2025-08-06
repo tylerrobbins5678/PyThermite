@@ -41,27 +41,26 @@ impl Index{
         Ok(result.iter().map(|arc| (**arc).py_item.clone_ref(py)).collect())
     }
 
-    pub fn add_object_many(&mut self, py: Python, objs: Vec<Indexable>) -> PyResult<()> {
+    pub fn add_object_many(&mut self, py: Python, objs: Vec<PyRefMut<Indexable>>) -> PyResult<()> {
 
-        py.allow_threads(||{
-            let mut index= self.index.write().unwrap();
-            for py_ref in &objs{
-                self.allowed_items.add(py_ref.id);
-                for (key, value) in unsafe { py_ref.py_values.map_ref() }.iter(){
-                    if key.starts_with("_"){continue;}
-                    _add_index(&mut index, py_ref.id , key.to_string(), value);
-                }
+        let mut index= self.index.write().unwrap();
+        for py_ref in &objs{
+            self.allowed_items.add(py_ref.id);
+            for (key, value) in py_ref.py_values.iter(){
+                if key.starts_with("_"){continue;}
+                _add_index(&mut index, py_ref.id , key, value);
             }
-        });
+        }
 
         let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<Option<Arc<StoredItem>>>> = self.items.write().unwrap();
         let slf = Arc::new(self.clone());
-        for py_ref in objs{
+        for mut py_ref in objs{
             let idx = py_ref.id as usize;
             py_ref.add_index(slf.clone());
-            let py_obj: Py<Indexable> = py_ref.clone().into_pyobject(py)?.unbind();
+            //let py_obj: Py<Indexable> = py_ref.clone().into_pyobject(py)?.unbind();
+            let py_obj = py_ref.into_pyobject(py)?.unbind();
             let py_obj_arc = Arc::new(py_obj);
-            let stored_item = Arc::new(StoredItem::new(py_ref.clone(), py_obj_arc.clone()));
+            let stored_item = Arc::new(StoredItem::new(py_obj_arc.clone()));
             
             if items_writer.len() <= idx{
                 items_writer.resize(idx + 1, None);
@@ -75,18 +74,19 @@ impl Index{
 
     pub fn add_object(&mut self, py: Python, py_ref: PyRef<Indexable>) -> PyResult<()> {
 
-        let py_obj: Py<Indexable> = py_ref.clone().into_pyobject(py)?.unbind();
-        let py_obj_arc = Arc::new(py_obj);
-
         let mut py_val_FxHashMap: FxHashMap<String, PyValue> = FxHashMap::default();
-        for (key, value) in unsafe { py_ref.py_values.map_ref() }.iter(){
+        for (key, value) in py_ref.py_values.iter(){
             if key.starts_with("_"){continue;}
             py_val_FxHashMap.insert(key.clone(), value.clone());
         }
 
         let idx = py_ref.id;
-        let stored_item = Arc::new(StoredItem::new(py_ref.clone(), py_obj_arc.clone()));
+
+        let py_obj: Py<Indexable> = py_ref.into_pyobject(py)?.unbind();
+        let py_obj_arc = Arc::new(py_obj);
+        let stored_item = Arc::new(StoredItem::new(py_obj_arc.clone()));
         
+
         py.allow_threads(||{
             self.allowed_items.add(idx);
             {
@@ -101,7 +101,7 @@ impl Index{
             let mut index= self.index.write().unwrap();
             for (key, value) in py_val_FxHashMap.iter() {
                 if key.starts_with("_"){continue;}
-                _add_index(&mut index, idx, key.clone(), value);
+                _add_index(&mut index, idx, key, value);
             }
 
         });
@@ -112,57 +112,56 @@ impl Index{
     }
 
     #[pyo3(signature = (**kwargs))]
-    pub fn reduce(
+    pub fn reduce<'py>(
         &mut self,
         py: Python,
-        kwargs: Option<FxHashMap<String, Py<PyAny>>>,
+        kwargs: Option<FxHashMap<String, pyo3::Bound<'py, PyAny>>>,
     ) -> PyResult<()> {
-        let query = kwargs_to_hash_query(py, &kwargs.unwrap_or_default())?;
-        py.allow_threads(|| {
-            let mut index = self.index.write().unwrap();
+        let query = kwargs_to_hash_query(kwargs.unwrap_or_default())?;
+        let mut index = self.index.write().unwrap();
 
-            let survivors = filter_index_by_hashes(&index, &query);
-            let survivors = HybridSet::Large(survivors);
+        let survivors = filter_index_by_hashes(&index, &query);
+        let survivors = HybridSet::Large(survivors);
 
-            // Step 1: Remove items not in survivors
-            for attr_map in index.values_mut() {
-                attr_map.remove(&survivors);
-            }
+        // Step 1: Remove items not in survivors
+        for attr_map in index.values_mut() {
+            attr_map.remove(&survivors);
+        }
 
-            // Step 2: Add any missing entries for survivors
-            for idx in survivors.iter() {
+        // Step 2: Add any missing entries for survivors
+        for idx in survivors.iter() {
 
-                let reader = self.items.read().unwrap();
-                let item = reader.get(idx as usize).unwrap().clone().unwrap();
-                
-                let attr_map = unsafe { item.item.py_values.map_ref() };
-                for (attr, val) in attr_map.iter() {
-                    if attr.starts_with("_") {
-                        continue;
-                    }
-                    index
-                        .entry(attr.clone())
-                        .or_insert_with(|| Box::new(QueryMap::new()))
-                        .insert(&val, idx);
+            let reader = self.items.read().unwrap();
+            let item = reader.get(idx as usize).unwrap().clone().unwrap();
+
+            let py_item = item.py_item.bind(py).borrow();
+            
+            for (attr, val) in py_item.py_values.iter() {
+                if attr.starts_with("_") {
+                    continue;
                 }
+                index
+                    .entry(attr.clone())
+                    .or_insert_with(|| Box::new(QueryMap::new()))
+                    .insert(&val, idx);
             }
+        }
 
-            // Optional: clean up empty submaps
+        // Optional: clean up empty submaps
 //            index.retain(|_, val_map| {
 //                val_map.retain(|_, set| !set.is_empty());
 //                !val_map.is_empty()
 //            });
-            Ok(())
-        })
+        Ok(())
     }
 
     #[pyo3(signature = (**kwargs))]
-    pub fn reduced(
+    pub fn reduced<'py>(
         &self,
         py: Python,
-        kwargs: Option<FxHashMap<String, Py<PyAny>>>,
+        kwargs: Option<FxHashMap<String, pyo3::Bound<'py, PyAny>>>,
     ) -> PyResult<FilteredIndex> {
-        let query = kwargs_to_hash_query(py, &kwargs.unwrap_or_default())?;
+        let query = kwargs_to_hash_query(kwargs.unwrap_or_default())?;
         py.allow_threads(move || {
             let index = self.index.read().unwrap();
             Ok(FilteredIndex {
@@ -189,13 +188,13 @@ impl Index{
     }
 
     #[pyo3(signature = (**kwargs))]
-    pub fn get_by_attribute(
+    pub fn get_by_attribute<'py>(
         &self,
         py: Python,
-        kwargs: Option<FxHashMap<String, Py<PyAny>>>,
+        kwargs: Option<FxHashMap<String, pyo3::Bound<'py, PyAny>>>,
     ) -> PyResult<Vec<Py<Indexable>>> {
 
-        let query = kwargs_to_hash_query(py, &kwargs.unwrap_or_default())?;
+        let query = kwargs_to_hash_query(kwargs.unwrap_or_default())?;
         let index = self.index.read().unwrap();
         let indexes: Bitmap = filter_index_by_hashes(&index, &query);
     
@@ -245,17 +244,16 @@ impl Index{
     pub fn update_index(
         &self,
         mut index: std::sync::RwLockWriteGuard<'_, FxHashMap<String, Box<QueryMap>>>,
-        attr: String, 
+        attr: &str, 
         old_pv: &PyValue,
-        new_val: &PyObject,
+        new_pv: &PyValue,
         item_id: u32,
     ) -> PyResult<()> {
         if attr.starts_with("_") {
             return Ok(());
         }
-        let new_pv = PyValue::new(new_val);
 
-        _remove_index(&mut index, item_id, &attr, old_pv.clone());
+        _remove_index(&mut index, item_id, attr, old_pv.clone());
         _add_index(&mut index, item_id, attr, &new_pv);
 
         Ok(())
@@ -287,15 +285,15 @@ fn union_with(index: &Index, other: &Index) -> PyResult<()> {
 pub fn _add_index(
     index: &mut std::sync::RwLockWriteGuard<'_, FxHashMap<String, Box<QueryMap>>>, 
     obj_id: u32,
-    attr: String,
+    attr: &str,
     value: &PyValue
 ){
-    if let Some(qmap) = index.get_mut(&attr) {
+    if let Some(qmap) = index.get_mut(attr) {
         qmap.insert(value, obj_id);
     } else {
         let mut qmap = QueryMap::new();
         qmap.insert(value, obj_id);
-        index.insert(attr, Box::new(qmap));
+        index.insert(attr.to_string(), Box::new(qmap));
     }
 }
 

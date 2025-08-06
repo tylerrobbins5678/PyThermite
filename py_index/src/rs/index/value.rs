@@ -1,4 +1,4 @@
-use pyo3::prelude::*;
+use pyo3::{prelude::*, PyTypeInfo};
 use pyo3::types::PyAny;
 use std::{hash::{Hash, Hasher}, sync::Arc};
 
@@ -18,31 +18,30 @@ pub struct PyValue {
 }
 
 impl PyValue {
-    pub fn new(obj: &Py<PyAny>) -> Self {
-        Python::with_gil(|py| {
-            let bound = obj.clone_ref(py).into_bound(py);
+    pub fn new<'py>(obj: Bound<'py, PyAny>) -> Self {
 
-            let primitave = if let Ok(v) = bound.extract::<i64>() {
-                RustCastValue::Int(v)
-            } else if let Ok(v) = bound.extract::<f64>() {
-                RustCastValue::Float(v)
-            } else if let Ok(v) = bound.extract::<String>() {
-                RustCastValue::Str(v)
-            } else {
-                RustCastValue::Unknown
-            };
+        let py_type = obj.get_type();
 
-            let hash = match bound.hash() {
-                Ok(i) => i as u64,
-                Err(_) => 0,
-            };
+        let primitave = if py_type.is(pyo3::types::PyInt::type_object(obj.py())) {
+            RustCastValue::Int(obj.extract::<i64>().unwrap())
+        } else if py_type.is(pyo3::types::PyFloat::type_object(obj.py())) {
+            RustCastValue::Float(obj.extract::<f64>().unwrap())
+        } else if py_type.is(pyo3::types::PyString::type_object(obj.py())) {
+            RustCastValue::Str(obj.extract::<String>().unwrap())
+        } else {
+            RustCastValue::Unknown
+        };
 
-            Self {
-                obj: Arc::new(obj.clone_ref(py)),
-                primitave,
-                hash,
-            }
-        })
+        let hash = match obj.hash() {
+            Ok(i) => i as u64,
+            Err(_) => 0,
+        };
+
+        Self {
+            obj: Arc::new(obj.into()),
+            primitave,
+            hash,
+        }
     }
 
     pub fn get_primitive(&self) -> &RustCastValue {

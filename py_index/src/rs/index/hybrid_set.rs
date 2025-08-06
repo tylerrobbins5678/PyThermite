@@ -157,6 +157,7 @@ impl HybridSet {
         *self = replacement;
     }
 
+    #[inline]
     pub fn add(&mut self, val: u32) {
         match self {
             HybridSet::Small(sm) => {

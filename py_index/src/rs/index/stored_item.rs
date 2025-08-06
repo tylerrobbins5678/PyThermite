@@ -1,34 +1,23 @@
-use pyo3::{Bound, IntoPyObject, Py, PyAny, Python};
+use pyo3::{types::PyAnyMethods, Bound, IntoPyObject, Py, PyAny, PyRef, Python};
 use std::{hash::{Hash, Hasher}, sync::Arc};
 
 use crate::index::Indexable;
 
 pub struct StoredItem{
-    pub item: Indexable,
     pub py_item: Arc<Py<Indexable>>,
 }
 
 impl StoredItem {
-    pub fn new(item: Indexable, py_item: Arc<Py<Indexable>>) -> Self {
+    pub fn new(py_item: Arc<Py<Indexable>>) -> Self {
         Self {
-            item: item.clone(),
             py_item: py_item.clone(),
-        }
-    }
-}
-
-impl Clone for StoredItem {
-    fn clone(&self) -> Self {
-        StoredItem {
-            item: self.item.clone(),
-            py_item: self.py_item.clone(),
         }
     }
 }
 
 impl PartialEq for StoredItem {
     fn eq(&self, other: &Self) -> bool {
-        self.item == other.item
+        self.py_item.as_ptr() == other.py_item.as_ptr()
     }
 }
 
@@ -36,7 +25,10 @@ impl Eq for StoredItem {}
 
 impl Hash for StoredItem {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.item.hash(state)
+        // Better:
+        let py_id = self.py_item.as_ptr();
+        py_id.hash(state);
+
     }
 }
 

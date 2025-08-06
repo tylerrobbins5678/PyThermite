@@ -11,7 +11,6 @@ use crate::index::{value::{PyValue, RustCastValue}, BitMapBTree, HybridSet, Key}
 pub struct QueryMap {
     exact: FxHashMap<PyValue, HybridSet>,
     num_ordered: BitMapBTree,
-    str_ordered: BTreeMap<String, Arc<UnsafeCell<Bitmap>>>,
 }
 
 unsafe impl Send for QueryMap {}
@@ -22,10 +21,10 @@ impl QueryMap {
         Self{
             exact: FxHashMap::default(),
             num_ordered: BitMapBTree::new(),
-            str_ordered: BTreeMap::new()
         }
     }
 
+    #[inline]
     pub fn insert(&mut self, value: &PyValue, obj_id: u32){
 
         
@@ -138,10 +137,6 @@ impl QueryMap {
             }
             RustCastValue::Str(f) => {
                 let mut result = Bitmap::new();
-                for (_, bitmap) in self.str_ordered
-                    .range((std::ops::Bound::Excluded(f.clone()), std::ops::Bound::Unbounded)) {
-                    result.or_inplace(unsafe { &*bitmap.get() });
-                }
                 result
             }
             RustCastValue::Unknown => {
@@ -169,10 +164,6 @@ impl QueryMap {
             }
             RustCastValue::Str(f) => {
                 let mut result = Bitmap::new();
-                for (_, bitmap) in self.str_ordered
-                    .range((std::ops::Bound::Included(f.clone()), std::ops::Bound::Unbounded)) {
-                    result.or_inplace(unsafe { &*bitmap.get() });
-                }
                 result
             }
             RustCastValue::Unknown => {
@@ -199,10 +190,6 @@ impl QueryMap {
             }
             RustCastValue::Str(f) => {
                 let mut result = Bitmap::new();
-                for (_, bitmap) in self.str_ordered
-                    .range((std::ops::Bound::Unbounded, std::ops::Bound::Excluded(f.clone()))) {
-                    result.or_inplace(unsafe { &*bitmap.get() });
-                }
                 result
             }
             RustCastValue::Unknown => {
@@ -230,10 +217,6 @@ impl QueryMap {
             }
             RustCastValue::Str(f) => {
                 let mut result = Bitmap::new();
-                for (_, bitmap) in self.str_ordered
-                    .range((std::ops::Bound::Unbounded, std::ops::Bound::Included(f.clone()))) {
-                    result.or_inplace(unsafe { &*bitmap.get() });
-                }
                 result
             }
             RustCastValue::Unknown => {
@@ -361,57 +344,57 @@ pub struct PyQueryExpr {
 #[pymethods]
 impl PyQueryExpr {
     #[staticmethod]
-    pub fn eq(attr: String, value: PyObject) -> Self {
+    pub fn eq<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
         Self {
-            inner: QueryExpr::Eq(attr, PyValue::new(&value)),
+            inner: QueryExpr::Eq(attr, PyValue::new(value)),
         }
     }
 
     #[staticmethod]
-    pub fn ne(attr: String, value: PyObject) -> Self {
+    pub fn ne<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
         Self {
-            inner: QueryExpr::Ne(attr, PyValue::new(&value)),
+            inner: QueryExpr::Ne(attr, PyValue::new(value)),
         }
     }
 
     #[staticmethod]
-    pub fn gt(attr: String, value: PyObject) -> Self {
+    pub fn gt<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
         Self {
-            inner: QueryExpr::Gt(attr, PyValue::new(&value)),
+            inner: QueryExpr::Gt(attr, PyValue::new(value)),
         }
     }
 
     #[staticmethod]
-    pub fn ge(attr: String, value: PyObject) -> Self {
+    pub fn ge<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
         Self {
-            inner: QueryExpr::Ge(attr, PyValue::new(&value)),
+            inner: QueryExpr::Ge(attr, PyValue::new(value)),
         }
     }
 
     #[staticmethod]
-    pub fn le(attr: String, value: PyObject) -> Self {
+    pub fn le<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
         Self {
-            inner: QueryExpr::Le(attr, PyValue::new(&value)),
+            inner: QueryExpr::Le(attr, PyValue::new(value)),
         }
     }
 
     #[staticmethod]
-    pub fn bt(attr: String, lower: PyObject, upper: PyObject) -> Self {
+    pub fn bt<'py>(attr: String, lower: pyo3::Bound<'py, PyAny>, upper: pyo3::Bound<'py, PyAny>) -> Self {
         Self {
-            inner: QueryExpr::Bt(attr, PyValue::new(&lower), PyValue::new(&upper)),
+            inner: QueryExpr::Bt(attr, PyValue::new(lower), PyValue::new(upper)),
         }
     }
 
     #[staticmethod]
-    pub fn lt(attr: String, value: PyObject) -> Self {
+    pub fn lt<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
         Self {
-            inner: QueryExpr::Lt(attr, PyValue::new(&value)),
+            inner: QueryExpr::Lt(attr, PyValue::new(value)),
         }
     }
 
     #[staticmethod]
-    pub fn in_(attr: String, values: Vec<PyObject>) -> Self {
-        let values = values.into_iter().map(|obj: pyo3::Py<pyo3::PyAny>| PyValue::new(&obj)).collect();
+    pub fn in_<'py>(attr: String, values: Vec<pyo3::Bound<'py, PyAny>>) -> Self {
+        let values = values.into_iter().map(|obj| PyValue::new(obj)).collect();
         Self {
             inner: QueryExpr::In(attr, values),
         }
@@ -539,24 +522,22 @@ pub fn evaluate_query(
     }
 }
 
-pub fn kwargs_to_hash_query(
-    py: Python,
-    kwargs: &FxHashMap<String, Py<PyAny>>,
+pub fn kwargs_to_hash_query<'py>(
+    kwargs: FxHashMap<String, pyo3::Bound<'py, PyAny>>,
 ) -> PyResult<FxHashMap<String, HashSet<PyValue>>> {
     let mut query = FxHashMap::default();
 
     for (attr, py_val) in kwargs {
-        let val_ref = py_val.clone_ref(py).into_bound(py);
         let mut hash_set = HashSet::new();
 
         // Detect if iterable but not string
-        let is_str = val_ref.is_instance_of::<PyString>();
+        let is_str = py_val.is_instance_of::<PyString>();
 
         if !is_str {
-            match val_ref.try_iter() {
+            match py_val.try_iter() {
                 Ok(iter) => {
                     for item in iter {
-                        let lookup_item = PyValue::new(&item.unwrap().unbind());
+                        let lookup_item = PyValue::new(item.unwrap());
                         hash_set.insert(lookup_item);
                     }
                 }
