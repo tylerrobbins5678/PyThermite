@@ -1,9 +1,11 @@
+use pyo3::sync::GILOnceCell;
+use pyo3::{ffi, IntoPyObjectExt, PyRef};
 use rustc_hash::FxHashMap;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::hash::{Hash, Hasher};
-use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyDict, PyList, PyString, PyTuple}, Bound, IntoPyObject, Py, PyAny, PyObject, PyRef, PyResult, Python};
+use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyDict, PyList, PyString, PyTuple}, Bound, IntoPyObject, Py, PyAny, PyObject, PyResult, Python};
 
 
 use crate::index::py_dict_values::UnsafePyValues;
@@ -62,28 +64,27 @@ impl Indexable{
         Ok(())
     }
 
-    fn __getattr__(&self, py: Python, name: String) -> PyResult<&Py<PyAny>> {
-
-        // should alreday be sorted
-        // self.meta.sort_by_key(|ind| Arc::as_ptr(&ind.index) as usize);
+    fn __getattribute__(self_: Bound<'_, Indexable>, py: Python, name: String) -> PyResult<PyObject> {
 
         // aquire locks to prove nobody is writing
-        py.allow_threads(||{
-            let mut index_read_locks = Vec::with_capacity(self.meta.len());
-            for ind in self.meta.iter() {
-                let arc_index = ind.index.clone();
-                let guard = ind.index.index.read().unwrap();
-                index_read_locks.push((arc_index, guard));
-            }
 
-            match self.py_values.get(&name) {
-                Some(value) => Ok(value.get_obj()),
-                None => Err(pyo3::exceptions::PyAttributeError::new_err(format!(
-                    "Attribute '{}' not found on RUST side",
-                    name
-                ))),
-            }
-        })
+        let rust_self = self_.borrow();
+
+        let mut index_read_locks = Vec::with_capacity(rust_self.meta.len());
+        for ind in rust_self.meta.iter() {
+            let arc_index = ind.index.clone();
+            let guard = ind.index.index.read().unwrap();
+            index_read_locks.push((arc_index, guard));
+        }
+        
+        if let Some(value) = rust_self.py_values.get(&name) {
+            return Ok(value.get_obj().clone_ref(py));
+        } else {
+            let attr = name.into_pyobject(py)?.into_ptr();
+            let res = unsafe { ffi::PyObject_GenericGetAttr(self_.into_ptr(), attr) };
+            let py_any = unsafe { Py::from_borrowed_ptr(py, res) };
+            return Ok(py_any);
+        }
     }
 
     fn __dir__(py_ref: PyRef<Self>, py: Python<'_>) -> PyResult<Py<PyList>> {
