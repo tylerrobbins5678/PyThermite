@@ -1,6 +1,11 @@
-use pyo3::sync::GILOnceCell;
-use pyo3::{ffi, IntoPyObjectExt, PyRef};
+use ahash::HashMapExt;
+use pyo3::exceptions::PyAttributeError;
+use pyo3::types::PyDictMethods;
+use pyo3::types::PyStringMethods;
+use pyo3::{ffi, IntoPyObjectExt, PyErr, PyRef};
+
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -14,14 +19,13 @@ use crate::index::{stored_item::StoredItem, Index};
 
 static GLOBAL_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Clone)]
 struct IndexMeta{
     index: Arc<Index>,
 }
 
 #[pyclass(subclass)]
 pub struct Indexable{
-    meta: Vec<IndexMeta>,
+    meta: SmallVec<[IndexMeta; 2]>,
     pub py_values: FxHashMap<String, PyValue>,
     pub id: u32
 }
@@ -31,17 +35,35 @@ pub struct Indexable{
 impl Indexable{
 
     #[new]
-    #[pyo3(signature = (*_args, **_kwargs))]
+    #[pyo3(signature = (*_args, **kwargs))]
+    #[inline(always)]
     fn new(
-        _args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>
+        _args: &Bound<'_, PyAny>, kwargs: Option<&Bound<'_, PyDict>>
     ) -> Self {
+
+        let mut py_values: FxHashMap<String, PyValue>;
+
+        if let Some(dict) = kwargs {
+            let capacity = dict.len();
+            py_values = FxHashMap::with_capacity_and_hasher(capacity, Default::default());
+            for (key, value) in dict.iter() {
+                if let Ok(key_str) = key.downcast::<PyString>() {
+                    let key_string = key_str.to_str().unwrap_or("").to_string();
+                    py_values.insert(key_string, PyValue::new(value));
+                }
+            }
+        } else {
+            py_values = FxHashMap::new();
+        }
+
         Self {
-            meta: vec![],
+            meta: SmallVec::new(),
             id: GLOBAL_ID_COUNTER.fetch_add(1, Ordering::Relaxed) as u32,
-            py_values: FxHashMap::default()
+            py_values
         }
     }
 
+    #[inline(always)]
     fn __setattr__<'py>(&mut self, py: Python, name: String, value: Bound<'py, PyAny>) -> PyResult<()> {
 
         let val: PyValue = PyValue::new(value);
@@ -51,9 +73,8 @@ impl Indexable{
             py.allow_threads(||{
                 // Acquire write locks and pair with original Arc
                 for ind in self.meta.iter() {
-                    let arc_index = ind.index.clone();
                     let guard = ind.index.index.write().unwrap();
-                    arc_index.update_index(guard, &name, old_val, &val, self.id);
+                    ind.index.update_index(guard, &name, old_val, &val, self.id);
                 }
             });
         }
@@ -64,26 +85,35 @@ impl Indexable{
         Ok(())
     }
 
-    fn __getattribute__(self_: Bound<'_, Indexable>, py: Python, name: String) -> PyResult<PyObject> {
+    #[inline(always)]
+    fn __getattribute__(self_: Bound<'_, Self>, py: Python, name: Bound<'_, PyString>) -> PyResult<PyObject> {
 
         // aquire locks to prove nobody is writing
 
         let rust_self = self_.borrow();
+        let mut index_read_locks: SmallVec<[std::sync::RwLockReadGuard<'_, std::collections::HashMap<String, Box<super::query::QueryMap>, rustc_hash::FxBuildHasher>>; 2]> = SmallVec::new();
 
-        let mut index_read_locks = Vec::with_capacity(rust_self.meta.len());
+        // let mut index_read_locks = Vec::with_capacity(rust_self.meta.len());
         for ind in rust_self.meta.iter() {
-            let arc_index = ind.index.clone();
             let guard = ind.index.index.read().unwrap();
-            index_read_locks.push((arc_index, guard));
+            index_read_locks.push(guard);
         }
+
+        let name_str = match name.to_str() {
+            Ok(s) => s,
+            Err(_) => return Err(PyAttributeError::new_err("Invalid attribute name")),
+        };
         
-        if let Some(value) = rust_self.py_values.get(&name) {
-            return Ok(value.get_obj().clone_ref(py));
+        if let Some(value) = rust_self.py_values.get(name_str) {
+            Ok(value.get_obj().clone_ref(py))
         } else {
-            let attr = name.into_pyobject(py)?.into_ptr();
-            let res = unsafe { ffi::PyObject_GenericGetAttr(self_.into_ptr(), attr) };
-            let py_any = unsafe { Py::from_borrowed_ptr(py, res) };
-            return Ok(py_any);
+
+            let res = unsafe { ffi::PyObject_GenericGetAttr(self_.into_ptr(), name.into_ptr()) };
+            if res.is_null() {
+                Err(PyErr::fetch(py))
+            } else {
+                Ok(unsafe { Py::from_borrowed_ptr(py, res) })
+            }
         }
     }
 
@@ -91,7 +121,7 @@ impl Indexable{
         let mut names: Vec<PyObject> = vec![];
         {
             for key in py_ref.py_values.keys() {
-                names.push(PyString::new(py, key).into_pyobject(py)?.unbind().into_any());
+                names.push(PyString::new(py, key).into_py_any(py).unwrap());
             }
         }
 

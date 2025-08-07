@@ -248,15 +248,13 @@ impl Index{
         old_pv: &PyValue,
         new_pv: &PyValue,
         item_id: u32,
-    ) -> PyResult<()> {
+    ) {
         if attr.starts_with("_") {
-            return Ok(());
+            return;
         }
 
         _remove_index(&mut index, item_id, attr, old_pv.clone());
         _add_index(&mut index, item_id, attr, &new_pv);
-
-        Ok(())
     }
 
     fn get_from_indexes(&self, py: Python, indexes: Bitmap) -> PyResult<Vec<Py<Indexable>>>{
