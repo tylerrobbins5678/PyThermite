@@ -246,6 +246,7 @@ dependencies = [
  "rayon",
  "roaring",
  "rustc-hash",
+ "smallvec",
 ]
 
 [[package]]
