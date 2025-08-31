@@ -3,6 +3,7 @@ use std::{sync::{Arc, RwLock}, time::Instant, vec};
 use croaring::Bitmap;
 use pyo3::prelude::*;
 use rustc_hash::FxHashMap;
+use smol_str::SmolStr;
 
 use crate::index::{filtered_index::FilteredIndex, query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, PyQueryExpr, QueryMap}, HybridSet, Indexable};
 
@@ -13,8 +14,8 @@ use super::value::PyValue;
 #[pyclass]
 #[derive(Clone)]
 pub struct Index{
-    pub index: Arc<RwLock<FxHashMap<String, Box<QueryMap>>>>,
-    pub items: Arc<RwLock<Vec<Option<Arc<StoredItem>>>>>,
+    pub index: Arc<RwLock<FxHashMap<SmolStr, Box<QueryMap>>>>,
+    pub items: Arc<RwLock<Vec<Option<StoredItem>>>>,
     pub allowed_items: Bitmap,
 }
 
@@ -43,38 +44,48 @@ impl Index{
 
     pub fn add_object_many(&mut self, py: Python, objs: Vec<PyRefMut<Indexable>>) -> PyResult<()> {
 
+        let start = Instant::now();
+
         let mut index= self.index.write().unwrap();
         for py_ref in &objs{
             self.allowed_items.add(py_ref.id);
             for (key, value) in py_ref.py_values.iter(){
                 if key.starts_with("_"){continue;}
-                _add_index(&mut index, py_ref.id , key, value);
+                _add_index(&mut index, py_ref.id , key.clone(), value);
             }
         }
 
-        let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<Option<Arc<StoredItem>>>> = self.items.write().unwrap();
+        let duration = start.elapsed();
+        println!("add to index: {:.6} seconds", duration.as_secs_f64());
+
+        let start = Instant::now();
+
+        let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<Option<StoredItem>>> = self.items.write().unwrap();
         let slf = Arc::new(self.clone());
         for mut py_ref in objs{
             let idx = py_ref.id as usize;
-            py_ref.add_index(slf.clone());
+            py_ref.add_index(Arc::downgrade(&slf.clone()));
             //let py_obj: Py<Indexable> = py_ref.clone().into_pyobject(py)?.unbind();
             let py_obj = py_ref.into_pyobject(py)?.unbind();
             let py_obj_arc = Arc::new(py_obj);
-            let stored_item = Arc::new(StoredItem::new(py_obj_arc.clone()));
+            let stored_item = StoredItem::new(py_obj_arc.clone());
             
             if items_writer.len() <= idx{
                 items_writer.resize(idx + 1, None);
             }
             
-            items_writer[idx] = Some(Arc::clone(&stored_item));
+            items_writer[idx] = Some(stored_item);
         }
+
+        let duration = start.elapsed();
+        println!("add to list: {:.6} seconds", duration.as_secs_f64());
 
         Ok(())
     }
 
     pub fn add_object(&mut self, py: Python, py_ref: PyRef<Indexable>) -> PyResult<()> {
 
-        let mut py_val_FxHashMap: FxHashMap<String, PyValue> = FxHashMap::default();
+        let mut py_val_FxHashMap: FxHashMap<SmolStr, PyValue> = FxHashMap::default();
         for (key, value) in py_ref.py_values.iter(){
             if key.starts_with("_"){continue;}
             py_val_FxHashMap.insert(key.clone(), value.clone());
@@ -84,29 +95,29 @@ impl Index{
 
         let py_obj: Py<Indexable> = py_ref.into_pyobject(py)?.unbind();
         let py_obj_arc = Arc::new(py_obj);
-        let stored_item = Arc::new(StoredItem::new(py_obj_arc.clone()));
+        let stored_item = StoredItem::new(py_obj_arc.clone());
         
 
         py.allow_threads(||{
             self.allowed_items.add(idx);
             {
-                let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<Option<Arc<StoredItem>>>> = self.items.write().unwrap();
+                let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<Option<StoredItem>>> = self.items.write().unwrap();
                 if items_writer.len() <= idx as usize{
                     items_writer.resize(idx as usize + 1, None);
                 }
                 
-                items_writer[idx as usize] = Some(Arc::clone(&stored_item));
+                items_writer[idx as usize] = Some(stored_item);
             }
 
             let mut index= self.index.write().unwrap();
             for (key, value) in py_val_FxHashMap.iter() {
                 if key.starts_with("_"){continue;}
-                _add_index(&mut index, idx, key, value);
+                _add_index(&mut index, idx, key.clone(), value);
             }
 
         });
 
-        py_obj_arc.extract::<PyRefMut<Indexable>>(py)?.add_index(Arc::new(self.clone()));
+        py_obj_arc.extract::<PyRefMut<Indexable>>(py)?.add_index(Arc::downgrade(&Arc::new(self.clone())));
 
         Ok(())
     }
@@ -243,8 +254,8 @@ impl Index{
 impl Index{
     pub fn update_index(
         &self,
-        mut index: std::sync::RwLockWriteGuard<'_, FxHashMap<String, Box<QueryMap>>>,
-        attr: &str, 
+        mut index: std::sync::RwLockWriteGuard<'_, FxHashMap<SmolStr, Box<QueryMap>>>,
+        attr: SmolStr, 
         old_pv: &PyValue,
         new_pv: &PyValue,
         item_id: u32,
@@ -253,7 +264,7 @@ impl Index{
             return;
         }
 
-        _remove_index(&mut index, item_id, attr, old_pv.clone());
+        _remove_index(&mut index, item_id, &attr, old_pv.clone());
         _add_index(&mut index, item_id, attr, &new_pv);
     }
 
@@ -281,22 +292,22 @@ fn union_with(index: &Index, other: &Index) -> PyResult<()> {
 
 
 pub fn _add_index(
-    index: &mut std::sync::RwLockWriteGuard<'_, FxHashMap<String, Box<QueryMap>>>, 
+    index: &mut std::sync::RwLockWriteGuard<'_, FxHashMap<SmolStr, Box<QueryMap>>>, 
     obj_id: u32,
-    attr: &str,
+    attr: SmolStr,
     value: &PyValue
 ){
-    if let Some(qmap) = index.get_mut(attr) {
+    if let Some(qmap) = index.get_mut(&attr) {
         qmap.insert(value, obj_id);
     } else {
         let mut qmap = QueryMap::new();
         qmap.insert(value, obj_id);
-        index.insert(attr.to_string(), Box::new(qmap));
+        index.insert(attr, Box::new(qmap));
     }
 }
 
 fn _remove_index(
-    index: &mut std::sync::RwLockWriteGuard<'_, FxHashMap<String, Box<QueryMap>>>,
+    index: &mut std::sync::RwLockWriteGuard<'_, FxHashMap<SmolStr, Box<QueryMap>>>,
     idx: u32,
     attr: &str, 
     py_value: PyValue

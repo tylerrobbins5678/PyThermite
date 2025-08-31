@@ -3,6 +3,7 @@ use std::{sync::{Arc, RwLock}};
 use croaring::Bitmap;
 use pyo3::{pyclass, pymethods, Bound, IntoPyObject, Py, PyAny, PyResult, Python};
 use rustc_hash::FxHashMap;
+use smol_str::SmolStr;
 
 use crate::index::{query::{filter_index_by_hashes, kwargs_to_hash_query, QueryMap}, stored_item::StoredItem, value::PyValue, Index, Indexable};
 
@@ -11,8 +12,8 @@ use crate::index::{query::{filter_index_by_hashes, kwargs_to_hash_query, QueryMa
 #[pyclass]
 #[derive(Clone)]
 pub struct FilteredIndex {
-    pub index: Arc<RwLock<FxHashMap<String, Box<QueryMap>>>>,
-    pub items: Arc<RwLock<Vec<Option<Arc<StoredItem>>>>>,
+    pub index: Arc<RwLock<FxHashMap<SmolStr, Box<QueryMap>>>>,
+    pub items: Arc<RwLock<Vec<Option<StoredItem>>>>,
     pub allowed_items: Bitmap,
 }
 
@@ -55,7 +56,7 @@ impl FilteredIndex{
         let mut new_index = res_index.index.write().unwrap();
         let mut new_items = res_index.items.write().unwrap();
 
-        let res_index_arc = Arc::new(res_index.clone());
+        let res_index_arc = Arc::downgrade(&Arc::new(res_index.clone()));
         new_items.resize(max_size as usize + 1, None);
         
         for idx in self.allowed_items.iter() {
@@ -68,7 +69,7 @@ impl FilteredIndex{
             
             for (attr, val) in py_item.py_values.iter() {
                 new_index
-                    .entry(attr.clone())
+                    .entry(SmolStr::new(attr))
                     .or_insert_with(|| Box::new(QueryMap::new()))
                     .insert(val, idx);
             }

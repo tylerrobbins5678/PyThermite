@@ -4,6 +4,7 @@ use rustc_hash::FxHashMap;
 use croaring::Bitmap;
 use ordered_float::OrderedFloat;
 use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyString}, Py, PyAny, PyObject, PyResult, Python};
+use smol_str::SmolStr;
 
 use crate::index::{value::{PyValue, RustCastValue}, BitMapBTree, HybridSet, Key};
 
@@ -273,8 +274,8 @@ impl<'a> Iterator for QueryMapIter<'a> {
 }
 
 pub fn filter_index_by_hashes(
-    index: &FxHashMap<String, Box<QueryMap>>,
-    query: &FxHashMap<String, HashSet<PyValue>>,
+    index: &FxHashMap<SmolStr, Box<QueryMap>>,
+    query: &FxHashMap<SmolStr, HashSet<PyValue>>,
 ) -> Bitmap {
     let mut sets_iter: Bitmap = Bitmap::new();
     let mut first = true;
@@ -322,14 +323,14 @@ pub fn filter_index_by_hashes(
 
 #[derive(Clone, Debug)]
 pub enum QueryExpr {
-    Eq(String, PyValue),
-    Ne(String, PyValue),
-    Gt(String, PyValue),
-    Ge(String, PyValue),
-    Lt(String, PyValue),
-    Le(String, PyValue),
-    Bt(String, PyValue, PyValue),
-    In(String, Vec<PyValue>),
+    Eq(SmolStr, PyValue),
+    Ne(SmolStr, PyValue),
+    Gt(SmolStr, PyValue),
+    Ge(SmolStr, PyValue),
+    Lt(SmolStr, PyValue),
+    Le(SmolStr, PyValue),
+    Bt(SmolStr, PyValue, PyValue),
+    In(SmolStr, Vec<PyValue>),
     Not(Box<QueryExpr>),
     And(Vec<QueryExpr>),
     Or(Vec<QueryExpr>),
@@ -346,49 +347,49 @@ impl PyQueryExpr {
     #[staticmethod]
     pub fn eq<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
         Self {
-            inner: QueryExpr::Eq(attr, PyValue::new(value)),
+            inner: QueryExpr::Eq(SmolStr::new(attr), PyValue::new(value)),
         }
     }
 
     #[staticmethod]
     pub fn ne<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
         Self {
-            inner: QueryExpr::Ne(attr, PyValue::new(value)),
+            inner: QueryExpr::Ne(SmolStr::new(attr), PyValue::new(value)),
         }
     }
 
     #[staticmethod]
     pub fn gt<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
         Self {
-            inner: QueryExpr::Gt(attr, PyValue::new(value)),
+            inner: QueryExpr::Gt(SmolStr::new(attr), PyValue::new(value)),
         }
     }
 
     #[staticmethod]
     pub fn ge<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
         Self {
-            inner: QueryExpr::Ge(attr, PyValue::new(value)),
+            inner: QueryExpr::Ge(SmolStr::new(attr), PyValue::new(value)),
         }
     }
 
     #[staticmethod]
     pub fn le<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
         Self {
-            inner: QueryExpr::Le(attr, PyValue::new(value)),
+            inner: QueryExpr::Le(SmolStr::new(attr), PyValue::new(value)),
         }
     }
 
     #[staticmethod]
     pub fn bt<'py>(attr: String, lower: pyo3::Bound<'py, PyAny>, upper: pyo3::Bound<'py, PyAny>) -> Self {
         Self {
-            inner: QueryExpr::Bt(attr, PyValue::new(lower), PyValue::new(upper)),
+            inner: QueryExpr::Bt(SmolStr::new(attr), PyValue::new(lower), PyValue::new(upper)),
         }
     }
 
     #[staticmethod]
     pub fn lt<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
         Self {
-            inner: QueryExpr::Lt(attr, PyValue::new(value)),
+            inner: QueryExpr::Lt(SmolStr::new(attr), PyValue::new(value)),
         }
     }
 
@@ -396,7 +397,7 @@ impl PyQueryExpr {
     pub fn in_<'py>(attr: String, values: Vec<pyo3::Bound<'py, PyAny>>) -> Self {
         let values = values.into_iter().map(|obj| PyValue::new(obj)).collect();
         Self {
-            inner: QueryExpr::In(attr, values),
+            inner: QueryExpr::In(SmolStr::new(attr), values),
         }
     }
 
@@ -429,7 +430,7 @@ impl PyQueryExpr {
 }
 
 pub fn evaluate_query(
-    index: &FxHashMap<String, Box<QueryMap>>,
+    index: &FxHashMap<SmolStr, Box<QueryMap>>,
     all_valid: &Bitmap,
     expr: &QueryExpr,
 ) -> Bitmap {
@@ -524,7 +525,7 @@ pub fn evaluate_query(
 
 pub fn kwargs_to_hash_query<'py>(
     kwargs: FxHashMap<String, pyo3::Bound<'py, PyAny>>,
-) -> PyResult<FxHashMap<String, HashSet<PyValue>>> {
+) -> PyResult<FxHashMap<SmolStr, HashSet<PyValue>>> {
     let mut query = FxHashMap::default();
 
     for (attr, py_val) in kwargs {
@@ -552,7 +553,7 @@ pub fn kwargs_to_hash_query<'py>(
         }
 
         // Single value
-        query.insert(attr.clone(), hash_set);
+        query.insert(SmolStr::new(attr), hash_set);
     }
 
     Ok(query)
