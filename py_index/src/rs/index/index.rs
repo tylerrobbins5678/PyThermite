@@ -44,7 +44,6 @@ impl Index{
 
     pub fn add_object_many(&mut self, py: Python, objs: Vec<PyRefMut<Indexable>>) -> PyResult<()> {
 
-        let start = Instant::now();
 
         let raw_objs: Vec<&Indexable> = objs.iter()
             .map(| obj | {
@@ -58,15 +57,10 @@ impl Index{
                 for (key, value) in py_ref.py_values.iter(){
                     if key.starts_with("_"){continue;}
                     let mut index = self.index.write().unwrap();
-                    _add_index(&mut index, py_ref.id, key.clone(), value);                    
+                    _add_index(&mut index, py_ref.id, key.clone(), value);
                 }
             }
         });
-
-        let duration = start.elapsed();
-        println!("add to index: {:.6} seconds", duration.as_secs_f64());
-
-        let start = Instant::now();
 
         let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<Option<StoredItem>>> = self.items.write().unwrap();
         let slf = Arc::new(self.clone());
@@ -84,9 +78,6 @@ impl Index{
             
             items_writer[idx] = Some(stored_item);
         }
-
-        let duration = start.elapsed();
-        println!("add to list: {:.6} seconds", duration.as_secs_f64());
 
         Ok(())
     }

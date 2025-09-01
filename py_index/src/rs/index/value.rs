@@ -12,7 +12,7 @@ pub enum RustCastValue {
 
 #[derive(Debug)]
 pub struct PyValue {
-    obj: Py<PyAny>,
+    obj: Arc<Py<PyAny>>,
     primitave: RustCastValue,
     hash: u64,
 }
@@ -38,7 +38,7 @@ impl PyValue {
         };
 
         Self {
-            obj: obj.into(),
+            obj: Arc::new(obj.into()),
             primitave,
             hash,
         }
@@ -61,11 +61,8 @@ impl PartialEq for PyValue {
 
 impl Clone for PyValue {
     fn clone(&self) -> Self {
-        let obj = Python::with_gil( | py | {
-            self.obj.clone_ref(py)
-        });
         Self {
-            obj: obj,
+            obj: self.obj.clone(),
             primitave: self.primitave.clone(),
             hash: self.hash,
         }
