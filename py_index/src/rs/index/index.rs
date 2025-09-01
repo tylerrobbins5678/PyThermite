@@ -1,5 +1,5 @@
 
-use std::{sync::{Arc, RwLock}, time::Instant, vec};
+use std::{ops::Deref, sync::{Arc, RwLock}, time::Instant, vec};
 use croaring::Bitmap;
 use pyo3::prelude::*;
 use rustc_hash::FxHashMap;
@@ -46,14 +46,22 @@ impl Index{
 
         let start = Instant::now();
 
-        let mut index= self.index.write().unwrap();
-        for py_ref in &objs{
-            self.allowed_items.add(py_ref.id);
-            for (key, value) in py_ref.py_values.iter(){
-                if key.starts_with("_"){continue;}
-                _add_index(&mut index, py_ref.id , key.clone(), value);
+        let raw_objs: Vec<&Indexable> = objs.iter()
+            .map(| obj | {
+                obj.deref()
+            })
+            .collect();
+
+        py.allow_threads(|| {
+            for py_ref in raw_objs {
+                self.allowed_items.add(py_ref.id);
+                for (key, value) in py_ref.py_values.iter(){
+                    if key.starts_with("_"){continue;}
+                    let mut index = self.index.write().unwrap();
+                    _add_index(&mut index, py_ref.id, key.clone(), value);                    
+                }
             }
-        }
+        });
 
         let duration = start.elapsed();
         println!("add to index: {:.6} seconds", duration.as_secs_f64());
