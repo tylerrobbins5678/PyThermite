@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "PyThermite"
-version = "2025.2.15"
+version = "0.0.2-alpha"
 dependencies = [
  "ahash",
  "croaring",
