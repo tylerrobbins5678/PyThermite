@@ -1,6 +1,6 @@
 
 [project]
-name = "PyThermite"
+name = "pythermite"
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",

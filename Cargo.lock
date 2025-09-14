@@ -3,24 +3,6 @@
 version = 4
 
 [[package]]
-name = "PyThermite"
-version = "0.0.2-alpha"
-dependencies = [
- "ahash",
- "croaring",
- "dashmap",
- "once_cell",
- "ordered-float",
- "pyo3",
- "rand",
- "rayon",
- "roaring",
- "rustc-hash",
- "smallvec",
- "smol_str",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -326,6 +308,24 @@ dependencies = [
  "pyo3-build-config",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "pythermite"
+version = "0.0.2-alpha"
+dependencies = [
+ "ahash",
+ "croaring",
+ "dashmap",
+ "once_cell",
+ "ordered-float",
+ "pyo3",
+ "rand",
+ "rayon",
+ "roaring",
+ "rustc-hash",
+ "smallvec",
+ "smol_str",
 ]
 
 [[package]]
