@@ -19,6 +19,17 @@ permissions:
   contents: read
 
 jobs:
+
+  debug-stuff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Debug GitHub context
+        run: |
+          echo "github.ref = $GITHUB_REF"
+          echo "github sha = $GITHUB_SHA"
+          echo "github.event_name = $GITHUB_EVENT_NAME"
+
   linux:
     runs-on: ${{ matrix.platform.runner }}
     strategy:
