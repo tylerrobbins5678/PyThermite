@@ -13,7 +13,7 @@ fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
 
 /// A Python module implemented in Rust.
 #[pymodule]
-fn py_index(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn PyThermite(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
     m.add_class::<Index>()?;
     m.add_class::<Indexable>()?;

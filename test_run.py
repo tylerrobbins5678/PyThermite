@@ -2,9 +2,9 @@ import random
 import string
 import numpy as np
 
-from py_index import Index
-from py_index import Indexable
-from py_index import QueryExpr as Q
+from PyThermite import Index
+from PyThermite import Indexable
+from PyThermite import QueryExpr as Q
 
 
 import time
