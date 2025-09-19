@@ -1,9 +1,11 @@
 mod index;
 
 use pyo3::prelude::*;
-use index::Index;
+use index::IndexAPI;
 use index::Indexable;
 use index::PyQueryExpr;
+
+use crate::index::Index;
 
 /// Formats the sum of two numbers as string.
 #[pyfunction]

@@ -12,6 +12,7 @@ use crate::index::{value::{PyValue, RustCastValue}, BitMapBTree, HybridSet, Key}
 pub struct QueryMap {
     exact: FxHashMap<PyValue, HybridSet>,
     num_ordered: BitMapBTree,
+    parent: FxHashMap<u32, HybridSet>,
 }
 
 unsafe impl Send for QueryMap {}
@@ -22,6 +23,7 @@ impl QueryMap {
         Self{
             exact: FxHashMap::default(),
             num_ordered: BitMapBTree::new(),
+            parent: FxHashMap::default(),
         }
     }
 

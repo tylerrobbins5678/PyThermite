@@ -1,18 +1,30 @@
-use pyo3::{types::PyAnyMethods, Bound, IntoPyObject, Py, PyAny, PyRef, Python};
+use pyo3::{types::PyAnyMethods, Bound, IntoPyObject, Py, PyAny, PyRef, PyRefMut, Python};
 use std::{hash::{Hash, Hasher}, sync::Arc};
 
 use crate::index::Indexable;
 
 #[derive(Clone)]
 pub struct StoredItem{
-    pub py_item: Arc<Py<Indexable>>,
+    py_item: Arc<Py<Indexable>>,
 }
 
-impl StoredItem {
+impl<'py> StoredItem {
     pub fn new(py_item: Arc<Py<Indexable>>) -> Self {
         Self {
             py_item: py_item.clone(),
         }
+    }
+
+    pub fn get_py_ref(&self, py: Python) -> Py<Indexable> {
+        self.py_item.clone_ref(py)
+    }
+
+    pub fn borrow_py_ref(&self, py: Python<'py>) -> PyRef<'py, Indexable> {
+        self.py_item.bind(py).borrow()
+    }
+
+    pub fn borrow_py_ref_mut(&self, py: Python<'py>) -> PyRefMut<'py, Indexable> {
+        self.py_item.bind(py).borrow_mut()
     }
 }
 

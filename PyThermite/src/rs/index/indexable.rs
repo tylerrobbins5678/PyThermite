@@ -17,13 +17,13 @@ use smol_str::SmolStr;
 
 use crate::index::py_dict_values::UnsafePyValues;
 use crate::index::value::PyValue;
-use crate::index::{stored_item::StoredItem, Index};
+use crate::index::{stored_item::StoredItem, IndexAPI};
 
 static GLOBAL_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-static DEFAULT_INDEX_ARC: Lazy<Arc<Index>> = Lazy::new(|| Arc::new(Index::new()));
+static DEFAULT_INDEX_ARC: Lazy<Arc<IndexAPI>> = Lazy::new(|| Arc::new(IndexAPI::new()));
 
 struct IndexMeta{
-    index: Weak<Index>,
+    index: Weak<IndexAPI>,
 }
 
 #[pyclass(subclass)]
@@ -71,18 +71,24 @@ impl Indexable{
 
         let val: PyValue = PyValue::new(value);
 
-        if let Some(old_val) = self.py_values.get(name){
-
-            py.allow_threads(||{
-                // Acquire write locks and pair with original Arc
-                for ind in self.meta.iter() {
-                    if let Some(full_index) = ind.index.upgrade() {
-                        let guard = full_index.index.write().unwrap();
-                        full_index.update_index(guard, SmolStr::new(name), old_val, &val, self.id);
+        py.allow_threads(||{
+            for ind in self.meta.iter() {
+                eprintln!("updating in index");
+                if let Some(full_index) = ind.index.upgrade() {
+                    eprintln!("Index upgraded");
+                    let guard = full_index.index.write().unwrap();
+                    if let Some(old_val) = self.py_values.get(name){
+                        eprintln!("updating index");
+                        full_index.update_index(guard, SmolStr::new(name), Some(old_val), &val, self.id);
+                    } else {
+                        eprintln!("adding new field to index");
+                        full_index.update_index(guard, SmolStr::new(name), None, &val, self.id);
                     }
+                } else {
+                    eprintln!("weak ref upgrade failed");
                 }
-            });
-        }
+            }
+        });
 
         // update value
         self.py_values.insert(SmolStr::new(name), val);
@@ -97,7 +103,7 @@ impl Indexable{
 
         let rust_self = self_.borrow();
         
-        let arcs: SmallVec<[Arc<Index>;2]> = rust_self.meta
+        let arcs: SmallVec<[Arc<IndexAPI>;2]> = rust_self.meta
             .iter()
             .filter_map(|ind| ind.index.upgrade())
             .collect();
@@ -156,7 +162,7 @@ impl Indexable{
 
 impl Indexable {
 
-    pub fn trim_indexes(&mut self, remove: Arc<Index>){
+    pub fn trim_indexes(&mut self, remove: Arc<IndexAPI>){
         self.meta.retain(|m| {
             // Try to upgrade the Weak
             if let Some(arc) = m.index.upgrade() {
@@ -170,7 +176,7 @@ impl Indexable {
             }
         });
     }
-    pub fn add_index(&mut self, index: Weak<Index>) {
+    pub fn add_index(&mut self, index: Weak<IndexAPI>) {
         self.meta.push(IndexMeta {
             index: index,
         });
@@ -179,7 +185,7 @@ impl Indexable {
         self.meta.sort_by_key(|ind| Arc::as_ptr(&ind.index.upgrade().unwrap_or_else( || DEFAULT_INDEX_ARC.clone())) as usize);
     }
 
-    pub fn remove_index(&mut self, index: Arc<Index>) {
+    pub fn remove_index(&mut self, index: Arc<IndexAPI>) {
         self.trim_indexes(index);
     }
 }

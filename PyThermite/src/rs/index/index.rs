@@ -1,33 +1,135 @@
 
-use std::{ops::Deref, sync::{Arc, RwLock}, time::Instant, vec};
+use std::{ops::Deref, sync::{Arc, RwLock, Weak}, time::Instant, vec};
 use croaring::Bitmap;
 use pyo3::prelude::*;
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 
-use crate::index::{filtered_index::FilteredIndex, query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, PyQueryExpr, QueryMap}, HybridSet, Indexable};
+use crate::index::{filtered_index::FilteredIndex, query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, PyQueryExpr, QueryMap}, stored_item, HybridSet, Indexable};
 
 use super::stored_item::StoredItem;
 use super::value::PyValue;
 
 
 #[pyclass]
-#[derive(Clone)]
-pub struct Index{
-    pub index: Arc<RwLock<FxHashMap<SmolStr, Box<QueryMap>>>>,
-    pub items: Arc<RwLock<Vec<Option<StoredItem>>>>,
-    pub allowed_items: Bitmap,
+pub struct Index {
+    pub inner: Arc<IndexAPI>
 }
 
 #[pymethods]
-impl Index{
-
+impl Index {
     #[new]
+    pub fn new() -> Self {
+        let index = IndexAPI::new();
+        Self {
+            inner: Arc::new(index)
+        }
+    }
+
+    pub fn collect(&self, py: Python) -> PyResult<Vec<Py<Indexable>>> {
+        self.inner.collect(py)
+    }
+
+    #[pyo3(signature = (**kwargs))]
+    pub fn reduced<'py>(
+        &self,
+        py: Python,
+        kwargs: Option<FxHashMap<String, pyo3::Bound<'py, PyAny>>>,
+    ) -> PyResult<FilteredIndex> {
+        let query = kwargs_to_hash_query(kwargs.unwrap_or_default())?;
+        py.allow_threads(move || {
+            Ok(self.inner.reduced(query))
+        })
+    }
+
+    #[pyo3(signature = (**kwargs))]
+    pub fn reduce<'py>(
+        &mut self,
+        py: Python,
+        kwargs: Option<FxHashMap<String, pyo3::Bound<'py, PyAny>>>,
+    ) -> PyResult<()> {
+        self.inner.reduce(py, kwargs)
+    }
+
+    #[pyo3(signature = (**kwargs))]
+    pub fn get_by_attribute<'py>(
+        &self,
+        py: Python,
+        kwargs: Option<FxHashMap<String, pyo3::Bound<'py, PyAny>>>,
+    ) -> PyResult<Vec<Py<Indexable>>> {
+        let query = kwargs_to_hash_query(kwargs.unwrap_or_default())?;
+        let allowed = self.inner.get_by_attribute(query);
+        Ok(self.inner.get_from_indexes(py, allowed)?)
+    }
+
+    pub fn add_object_many(&mut self, py: Python, objs: Vec<PyRefMut<Indexable>>) -> PyResult<()> {
+
+        let raw_objs: Vec<&Indexable> = objs.iter()
+            .map(| obj | {
+                obj.deref()
+            })
+            .collect();
+
+        py.allow_threads(|| {
+            self.inner.add_object_many(raw_objs);
+        });
+        
+        let weak_self = Arc::downgrade(&self.inner);
+        self.inner.store_items(py, weak_self, objs)?;
+
+        Ok(())
+
+    }
+
+    pub fn add_object(&mut self, py: Python, py_ref: PyRef<Indexable>) -> PyResult<()> {
+
+        let mut py_val_hashmap: FxHashMap<SmolStr, PyValue> = FxHashMap::default();
+        for (key, value) in py_ref.py_values.iter(){
+            if key.starts_with("_"){continue;}
+            py_val_hashmap.insert(key.clone(), value.clone());
+        }
+
+        let idx = py_ref.id;
+        let py_obj: Py<Indexable> = py_ref.into_pyobject(py)?.unbind();
+        let py_obj_arc = Arc::new(py_obj);
+        
+        py.allow_threads(||{
+            let stored_item = StoredItem::new(py_obj_arc.clone());
+            self.inner.add_object(idx, stored_item, py_val_hashmap);
+        });
+
+        py_obj_arc.extract::<PyRefMut<Indexable>>(py)?.add_index(Arc::downgrade(&self.inner));
+
+        Ok(())
+    }
+
+    pub fn reduced_query(
+        &self,
+        py: Python,
+        query: PyQueryExpr,
+    ) -> PyResult<FilteredIndex> {
+        py.allow_threads(move || {
+            Ok(self.inner.reduced_query(query))
+        })
+    }
+
+}
+
+
+#[derive(Clone)]
+pub struct IndexAPI{
+    pub index: Arc<RwLock<FxHashMap<SmolStr, Box<QueryMap>>>>,
+    pub items: Arc<RwLock<Vec<Option<StoredItem>>>>,
+    pub allowed_items: Arc<RwLock<Bitmap>>
+}
+
+impl IndexAPI{
+
     pub fn new() -> Self {
         Self {
             index: Arc::new(RwLock::new(FxHashMap::default())),
             items: Arc::new(RwLock::new(vec![])),
-            allowed_items: Bitmap::new()
+            allowed_items: Arc::new(RwLock::new(Bitmap::new()))
         }
     }
 
@@ -39,35 +141,22 @@ impl Index{
                 result.push(item);
             }
         }
-        Ok(result.iter().map(|arc| (**arc).py_item.clone_ref(py)).collect())
+        Ok(result.iter().map(|arc| (**arc).get_py_ref(py)).collect())
     }
 
-    pub fn add_object_many(&mut self, py: Python, objs: Vec<PyRefMut<Indexable>>) -> PyResult<()> {
-
-
-        let raw_objs: Vec<&Indexable> = objs.iter()
-            .map(| obj | {
-                obj.deref()
-            })
-            .collect();
-
-        py.allow_threads(|| {
-            for py_ref in raw_objs {
-                self.allowed_items.add(py_ref.id);
-                for (key, value) in py_ref.py_values.iter(){
-                    if key.starts_with("_"){continue;}
-                    let mut index = self.index.write().unwrap();
-                    _add_index(&mut index, py_ref.id, key.clone(), value);
-                }
-            }
-        });
+    pub fn store_items(
+        &self,
+        py: Python,
+        weak_self: Weak<Self>,
+        raw_objs: Vec<PyRefMut<Indexable>>
+    ) -> PyResult<()>{
 
         let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<Option<StoredItem>>> = self.items.write().unwrap();
-        let slf = Arc::new(self.clone());
-        for mut py_ref in objs{
+
+        for mut py_ref in raw_objs{
             let idx = py_ref.id as usize;
-            py_ref.add_index(Arc::downgrade(&slf.clone()));
-            //let py_obj: Py<Indexable> = py_ref.clone().into_pyobject(py)?.unbind();
+            py_ref.add_index(weak_self.clone());
+
             let py_obj = py_ref.into_pyobject(py)?.unbind();
             let py_obj_arc = Arc::new(py_obj);
             let stored_item = StoredItem::new(py_obj_arc.clone());
@@ -78,52 +167,52 @@ impl Index{
             
             items_writer[idx] = Some(stored_item);
         }
-
         Ok(())
     }
 
-    pub fn add_object(&mut self, py: Python, py_ref: PyRef<Indexable>) -> PyResult<()> {
+    pub fn add_object_many(
+        &self,
+        raw_objs: Vec<&Indexable>
+    ) {
 
-        let mut py_val_FxHashMap: FxHashMap<SmolStr, PyValue> = FxHashMap::default();
-        for (key, value) in py_ref.py_values.iter(){
-            if key.starts_with("_"){continue;}
-            py_val_FxHashMap.insert(key.clone(), value.clone());
+        let mut index = self.index.write().unwrap();
+
+        for py_ref in raw_objs {
+            self.allowed_items.write().unwrap().add(py_ref.id);
+            for (key, value) in py_ref.py_values.iter(){
+                if key.starts_with("_"){continue;}
+                _add_index(&mut index, py_ref.id, key.clone(), value);
+            }
         }
 
-        let idx = py_ref.id;
-
-        let py_obj: Py<Indexable> = py_ref.into_pyobject(py)?.unbind();
-        let py_obj_arc = Arc::new(py_obj);
-        let stored_item = StoredItem::new(py_obj_arc.clone());
-        
-
-        py.allow_threads(||{
-            self.allowed_items.add(idx);
-            {
-                let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<Option<StoredItem>>> = self.items.write().unwrap();
-                if items_writer.len() <= idx as usize{
-                    items_writer.resize(idx as usize + 1, None);
-                }
-                
-                items_writer[idx as usize] = Some(stored_item);
-            }
-
-            let mut index= self.index.write().unwrap();
-            for (key, value) in py_val_FxHashMap.iter() {
-                if key.starts_with("_"){continue;}
-                _add_index(&mut index, idx, key.clone(), value);
-            }
-
-        });
-
-        py_obj_arc.extract::<PyRefMut<Indexable>>(py)?.add_index(Arc::downgrade(&Arc::new(self.clone())));
-
-        Ok(())
     }
 
-    #[pyo3(signature = (**kwargs))]
+    pub fn add_object(
+        &self,
+        idx: u32,
+        stored_item: StoredItem,
+        py_val_hashmap: FxHashMap<SmolStr, PyValue>
+    ) {
+
+        self.allowed_items.write().unwrap().add(idx);
+        {
+            let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<Option<StoredItem>>> = self.items.write().unwrap();
+            if items_writer.len() <= idx as usize{
+                items_writer.resize(idx as usize + 1, None);
+            }
+            
+            items_writer[idx as usize] = Some(stored_item);
+        }
+
+        let mut index= self.index.write().unwrap();
+        for (key, value) in py_val_hashmap.iter() {
+            if key.starts_with("_"){continue;}
+            _add_index(&mut index, idx, key.clone(), value);
+        }
+    }
+
     pub fn reduce<'py>(
-        &mut self,
+        &self,
         py: Python,
         kwargs: Option<FxHashMap<String, pyo3::Bound<'py, PyAny>>>,
     ) -> PyResult<()> {
@@ -144,7 +233,7 @@ impl Index{
             let reader = self.items.read().unwrap();
             let item = reader.get(idx as usize).unwrap().clone().unwrap();
 
-            let py_item = item.py_item.bind(py).borrow();
+            let py_item = item.borrow_py_ref(py);
             
             for (attr, val) in py_item.py_values.iter() {
                 if attr.starts_with("_") {
@@ -165,53 +254,37 @@ impl Index{
         Ok(())
     }
 
-    #[pyo3(signature = (**kwargs))]
-    pub fn reduced<'py>(
+
+    pub fn reduced(
         &self,
-        py: Python,
-        kwargs: Option<FxHashMap<String, pyo3::Bound<'py, PyAny>>>,
-    ) -> PyResult<FilteredIndex> {
-        let query = kwargs_to_hash_query(kwargs.unwrap_or_default())?;
-        py.allow_threads(move || {
-            let index = self.index.read().unwrap();
-            Ok(FilteredIndex {
-                index: self.index.clone(),
-                items: self.items.clone(),
-                allowed_items: filter_index_by_hashes(&index, &query)
-            })
-        })
+        query: std::collections::HashMap<SmolStr, std::collections::HashSet<PyValue>, rustc_hash::FxBuildHasher>
+    ) -> FilteredIndex {
+        let index = self.index.read().unwrap();
+        self.filter_from_bitmap(
+            filter_index_by_hashes(&index, &query)
+        )
     }
 
     pub fn reduced_query(
         &self,
-        py: Python,
         query: PyQueryExpr,
-    ) -> PyResult<FilteredIndex> {
-        py.allow_threads(move || {
-            let index = self.index.read().unwrap();
-            Ok(FilteredIndex {
-                index: self.index.clone(),
-                items: self.items.clone(),
-                allowed_items: evaluate_query(&index, &self.allowed_items, &query.inner)
-            })
-        })
-    }
-
-    #[pyo3(signature = (**kwargs))]
-    pub fn get_by_attribute<'py>(
-        &self,
-        py: Python,
-        kwargs: Option<FxHashMap<String, pyo3::Bound<'py, PyAny>>>,
-    ) -> PyResult<Vec<Py<Indexable>>> {
-
-        let query = kwargs_to_hash_query(kwargs.unwrap_or_default())?;
+    ) -> FilteredIndex {
         let index = self.index.read().unwrap();
-        let indexes: Bitmap = filter_index_by_hashes(&index, &query);
-    
-        Ok(self.get_from_indexes(py, indexes)?)
+        let allowed = self.allowed_items.read().unwrap();
+        self.filter_from_bitmap(
+            evaluate_query(&index, &allowed, &query.inner)
+        )
     }
 
-    pub fn union_with(&mut self, py: Python, other: &Index) -> PyResult<()>{
+    pub fn get_by_attribute(
+        &self,
+        query: std::collections::HashMap<SmolStr, std::collections::HashSet<PyValue>, rustc_hash::FxBuildHasher>
+    ) -> Bitmap {
+        let index = self.index.read().unwrap();
+        filter_index_by_hashes(&index, &query)
+    }
+
+    pub fn union_with(&mut self, py: Python, other: &IndexAPI) -> PyResult<()>{
         py.allow_threads(|| {
             union_with(&self, other)
         })
@@ -248,36 +321,45 @@ impl Index{
 //            }
 //        })
 //    }
-}
 
-impl Index{
     pub fn update_index(
         &self,
         mut index: std::sync::RwLockWriteGuard<'_, FxHashMap<SmolStr, Box<QueryMap>>>,
         attr: SmolStr, 
-        old_pv: &PyValue,
+        old_pv: Option<&PyValue>,
         new_pv: &PyValue,
         item_id: u32,
     ) {
         if attr.starts_with("_") {
             return;
         }
-
-        _remove_index(&mut index, item_id, &attr, old_pv.clone());
+        
+        if let Some(old_val) = old_pv {
+            _remove_index(&mut index, item_id, &attr, old_val.clone());
+        }
         _add_index(&mut index, item_id, attr, &new_pv);
     }
 
     fn get_from_indexes(&self, py: Python, indexes: Bitmap) -> PyResult<Vec<Py<Indexable>>>{
         let items_read = self.items.read().unwrap();
         let results: Vec<Py<Indexable>> = indexes.iter()
-            .map(|arc| items_read.get(arc as usize).unwrap().clone().unwrap().py_item.clone_ref(py))
+            .map(|arc| items_read.get(arc as usize).unwrap().as_ref().unwrap().get_py_ref(py))
             .collect();
 
         Ok(results)
     }
+
+    fn filter_from_bitmap(&self, bm: Bitmap) -> FilteredIndex {
+        FilteredIndex {
+            index: self.index.clone(),
+            items: self.items.clone(),
+            allowed_items: bm
+        }
+    }
+
 }
 
-fn union_with(index: &Index, other: &Index) -> PyResult<()> {
+fn union_with(index: &IndexAPI, other: &IndexAPI) -> PyResult<()> {
     let mut self_index = index.index.write().unwrap();
     let other_index = other.index.read().unwrap();
 
