@@ -113,6 +113,12 @@ impl Index {
         })
     }
 
+    pub fn union_with(&mut self, py: Python, other: &Index) -> PyResult<()>{
+        py.allow_threads(|| {
+            self.inner.union_with(&other.inner)
+        })
+    }
+
 }
 
 
@@ -176,15 +182,15 @@ impl IndexAPI{
     ) {
 
         let mut index = self.index.write().unwrap();
+        let mut allowed_writer = self.allowed_items.write().unwrap();
 
         for py_ref in raw_objs {
-            self.allowed_items.write().unwrap().add(py_ref.id);
+            allowed_writer.add(py_ref.id);
             for (key, value) in py_ref.py_values.iter(){
                 if key.starts_with("_"){continue;}
                 _add_index(&mut index, py_ref.id, key.clone(), value);
             }
         }
-
     }
 
     pub fn add_object(
@@ -284,10 +290,8 @@ impl IndexAPI{
         filter_index_by_hashes(&index, &query)
     }
 
-    pub fn union_with(&mut self, py: Python, other: &IndexAPI) -> PyResult<()>{
-        py.allow_threads(|| {
-            union_with(&self, other)
-        })
+    pub fn union_with(&self, other: &IndexAPI) -> PyResult<()>{
+        union_with(&self, other)
     }
 
 //    pub fn group_by(&self, py:Python, attr: &str) -> FxHashMap<PyValue, HashSet<StoredItem>> {
