@@ -73,19 +73,14 @@ impl Indexable{
 
         py.allow_threads(||{
             for ind in self.meta.iter() {
-                eprintln!("updating in index");
                 if let Some(full_index) = ind.index.upgrade() {
-                    eprintln!("Index upgraded");
                     let guard = full_index.index.write().unwrap();
+
                     if let Some(old_val) = self.py_values.get(name){
-                        eprintln!("updating index");
                         full_index.update_index(guard, SmolStr::new(name), Some(old_val), &val, self.id);
                     } else {
-                        eprintln!("adding new field to index");
                         full_index.update_index(guard, SmolStr::new(name), None, &val, self.id);
                     }
-                } else {
-                    eprintln!("weak ref upgrade failed");
                 }
             }
         });
