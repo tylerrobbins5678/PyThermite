@@ -479,6 +479,15 @@ fn attr_parts(attr: SmolStr) -> (SmolStr, Option<SmolStr>) {
     }
 }
 
+pub fn evaluate_nested_query(
+    nested_map: &Box<QueryMap>,
+    expr: &QueryExpr,
+) -> Bitmap {
+    let wrapper = PyQueryExpr{inner: expr.clone()};
+    let reduced = nested_map.nested.reduced_query(wrapper);
+    nested_map.get_parents(&reduced.allowed_items)
+}
+
 pub fn evaluate_query(
     index: &FxHashMap<SmolStr, Box<QueryMap>>,
     all_valid: &Bitmap,
@@ -490,9 +499,7 @@ pub fn evaluate_query(
             if let Some(qm) = index.get(&base_attr){
                 if let Some(nested_attr) = nested_attr {
                     let query = QueryExpr::Eq(nested_attr, value.clone());
-                    let wrapper = PyQueryExpr{ inner: query };
-                    let allowed_children = qm.nested.reduced_query(wrapper).allowed_items;
-                    qm.get_parents(&allowed_children)
+                    evaluate_nested_query(qm, &query)
                 } else {
                     qm.eq(value)
                 }
@@ -508,48 +515,86 @@ pub fn evaluate_query(
             )
         }
         QueryExpr::In(attr, values) => {
+            let (base_attr, nested_attr) = attr_parts(attr.clone());
             let mut result = Bitmap::new();
-            if let Some(qm) = index.get(attr) {
-                for v in values {
-                    if let Some(bm) = qm.get(v) {
-                        result.or_inplace(&bm.as_bitmap());
-                        result.and_inplace(all_valid);
+            if let Some(qm) = index.get(&base_attr) {
+
+                if let Some(nested_attr) = nested_attr {
+                    let query = QueryExpr::In(nested_attr, values.clone());
+                    result = evaluate_nested_query(qm, &query);
+                } else {
+                    for v in values {
+                        if let Some(bm) = qm.get(v) {
+                            result.or_inplace(&bm.as_bitmap());
+                            result.and_inplace(all_valid);
+                        }
                     }
                 }
+
             }
             result
         }
         QueryExpr::Gt(attr, value) => {
-            if let Some(qm) = index.get(attr) {
-                qm.gt(value.get_primitive(), all_valid)
+            let (base_attr, nested_attr) = attr_parts(attr.clone());
+            if let Some(qm) = index.get(&base_attr) {
+                if let Some(nested_attr) = nested_attr {
+                    let query = QueryExpr::Gt(nested_attr, value.clone());
+                    evaluate_nested_query(qm, &query)
+                } else {
+                    qm.gt(value.get_primitive(), all_valid)
+                }
             } else {
                 Bitmap::new()
             }
         }
         QueryExpr::Ge(attr, value) => {
-            if let Some(qm) = index.get(attr) {
-                qm.ge(value.get_primitive(), all_valid)
+            let (base_attr, nested_attr) = attr_parts(attr.clone());
+            if let Some(qm) = index.get(&base_attr) {
+                if let Some(nested_attr) = nested_attr {
+                    let query = QueryExpr::Ge(nested_attr, value.clone());
+                    evaluate_nested_query(qm, &query)
+                } else {
+                    qm.ge(value.get_primitive(), all_valid)
+                }
             } else {
                 Bitmap::new()
             }
         }
         QueryExpr::Le(attr, value) => {
-            if let Some(qm) = index.get(attr) {
-                qm.le(value.get_primitive(), all_valid)
-            } else {
-                Bitmap::new()
-            }
-        }
-        QueryExpr::Bt(attr, lower, upper) => {
-            if let Some(qm) = index.get(attr) {
-                qm.bt(lower.get_primitive(), upper.get_primitive(), all_valid)
+            let (base_attr, nested_attr) = attr_parts(attr.clone());
+            if let Some(qm) = index.get(&base_attr) {
+                if let Some(nested_attr) = nested_attr {
+                    let query = QueryExpr::Le(nested_attr, value.clone());
+                    evaluate_nested_query(qm, &query)
+                } else {
+                    qm.le(value.get_primitive(), all_valid)
+                }
             } else {
                 Bitmap::new()
             }
         }
         QueryExpr::Lt(attr, value) => {
-            if let Some(qm) = index.get(attr) {
-                qm.lt(value.get_primitive(), all_valid)
+            let (base_attr, nested_attr) = attr_parts(attr.clone());
+            if let Some(qm) = index.get(&base_attr) {
+                if let Some(nested_attr) = nested_attr {
+                    let query = QueryExpr::Lt(nested_attr, value.clone());
+                    evaluate_nested_query(qm, &query)
+                } else {
+                    qm.lt(value.get_primitive(), all_valid)
+                }
+            } else {
+                Bitmap::new()
+            }
+        }
+        QueryExpr::Bt(attr, lower, upper) => {
+            let (base_attr, nested_attr) = attr_parts(attr.clone());
+            if let Some(qm) = index.get(&base_attr) {
+                if let Some(nested_attr) = nested_attr {
+                    let query = QueryExpr::Bt(nested_attr, lower.clone(), upper.clone());
+                    evaluate_nested_query(qm, &query)
+                } else {
+                    qm.bt(lower.get_primitive(), upper.get_primitive(), all_valid)
+                }
             } else {
                 Bitmap::new()
             }

@@ -3,7 +3,7 @@
 import pytest
 
 # Replace `yourmodule` with the actual import name of your Rust extension
-from PyThermite import Index, Indexable, QueryExpr, FilteredIndex
+from PyThermite import Index, Indexable, QueryExpr as Q, FilteredIndex
 
 class TestClass(Indexable):
     def some_method(self):
@@ -53,9 +53,9 @@ def test_query(index):
     objs = [TestClass(num=i, active=(i % 2 == 0), score=float(i) * 10.0) for i in range(10)]
     index.add_object_many(objs)
 
-    query = QueryExpr.and_(
-        QueryExpr.eq("active", True),
-        QueryExpr.gt("score", 50.0)
+    query = Q.and_(
+        Q.eq("active", True),
+        Q.gt("score", 50.0)
     )
     result = index.reduced_query(query).collect()
     assert all(obj.active is True and obj.score > 50.0 for obj in result)
@@ -69,7 +69,7 @@ def test_filtered_index(index):
     filtered_index = index.reduced(active=True)
     # filter the filtered
     reduced = filtered_index.reduced_query(
-        QueryExpr.gt("score", 50.0)
+        Q.gt("score", 50.0)
     )
 
     result = reduced.collect()
@@ -81,11 +81,11 @@ def test_and_query(index):
     index.add_object_many(objs)
 
     # Create a nested query
-    query = QueryExpr.and_(
-        QueryExpr.eq("active", True),
-        QueryExpr.or_(
-            QueryExpr.gt("score", 70.0),
-            QueryExpr.lt("num", 3)
+    query = Q.and_(
+        Q.eq("active", True),
+        Q.or_(
+            Q.gt("score", 70.0),
+            Q.lt("num", 3)
         )
     )
     result = index.reduced_query(query).collect()
@@ -101,17 +101,16 @@ def test_nested_object_query(index):
     index.add_object_many(nested_objs)
 
     # Query based on nested object's attribute
-    query = QueryExpr.eq("nested.num", 20)
+    query = Q.eq("nested.num", 20)
     result = index.reduced_query(query).collect()
     assert len(result) == 1
     assert result[0].nested.num == 20
-
 
 def test_updates_reflect(index):
     obj = TestClass(num=1, active=True)
     index.add_object(obj)
 
-    query = QueryExpr.eq("active", True)
+    query = Q.eq("active", True)
     result = index.reduced_query(query).collect()
     assert len(result) == 1
 
