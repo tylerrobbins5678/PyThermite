@@ -5,12 +5,14 @@ use croaring::bitmap::BitmapIterator;
 
 const SMALL_LIMIT: usize = 4;
 
+#[derive(Clone)]
 pub enum HybridSet {
     Empty,
     Small(Small),  // stack
     Large(Bitmap), // heap
 }
 
+#[derive(Clone)]
 struct Small {
     len: usize,
     data: [u32; SMALL_LIMIT] 
@@ -40,6 +42,7 @@ impl Small{
     pub fn or_inplace_small(mut self, other: &Small) -> HybridSet {
         if self.len + other.len <= SMALL_LIMIT {
             self.data[self.len .. self.len + other.len].copy_from_slice(&other.data[..other.len]);
+            self.len += other.len;
             HybridSet::Small(self)
         } else {
             let mut new_bmp = Bitmap::of(self.as_slice());
@@ -112,21 +115,25 @@ impl HybridSet {
 
         let replacement = match (old_self, other) {
             (HybridSet::Small(small), HybridSet::Small(small_other)) => {
-                small.or_inplace_small(small_other)
-            }
+                        small.or_inplace_small(small_other)
+                    }
             (HybridSet::Small(small), HybridSet::Large(bitmap_other)) => {
-                // Returns Some(new_large) if promoted
-                small.or_inplace_large(bitmap_other)
-            }
+                        // Returns Some(new_large) if promoted
+                        small.or_inplace_large(bitmap_other)
+                    }
             (HybridSet::Large(mut bitmap), HybridSet::Small(small_other)) => {
-                bitmap.add_many(small_other.as_slice());
-                HybridSet::Large(bitmap)
-            }
+                        bitmap.add_many(small_other.as_slice());
+                        HybridSet::Large(bitmap)
+                    }
             (HybridSet::Large(mut bitmap), HybridSet::Large(bitmap_other)) => {
-                bitmap.or_inplace(bitmap_other);
-                HybridSet::Large(bitmap)
-            }
-            _ => unimplemented!(),
+                        bitmap.or_inplace(bitmap_other);
+                        HybridSet::Large(bitmap)
+                    }
+            (HybridSet::Empty, HybridSet::Small(small)) => other.clone(),
+            (HybridSet::Empty, HybridSet::Large(bitmap)) => other.clone(),
+            (HybridSet::Small(small), HybridSet::Empty) => self.clone(),
+            (HybridSet::Large(bitmap), HybridSet::Empty) => self.clone(),
+            (HybridSet::Empty, HybridSet::Empty) => HybridSet::Empty,
         };
 
         *self = replacement;

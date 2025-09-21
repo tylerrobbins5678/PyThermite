@@ -3,7 +3,7 @@ use std::{hash::{Hash, Hasher}, sync::Arc};
 
 use crate::index::Indexable;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StoredItem{
     py_item: Arc<Py<Indexable>>,
 }

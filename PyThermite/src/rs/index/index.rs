@@ -1,5 +1,5 @@
 
-use std::{ops::Deref, sync::{Arc, RwLock, Weak}, time::Instant, vec};
+use std::{fmt, ops::Deref, sync::{Arc, RwLock, Weak}, time::Instant, vec};
 use croaring::Bitmap;
 use pyo3::prelude::*;
 use rustc_hash::FxHashMap;
@@ -121,8 +121,7 @@ impl Index {
 
 }
 
-
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct IndexAPI{
     pub index: Arc<RwLock<FxHashMap<SmolStr, Box<QueryMap>>>>,
     pub items: Arc<RwLock<Vec<Option<StoredItem>>>>,
@@ -361,6 +360,20 @@ impl IndexAPI{
         }
     }
 
+}
+
+impl fmt::Debug for IndexAPI {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let index = self.index.read().unwrap();
+        let items = self.items.read().unwrap();
+        let allowed_items = self.allowed_items.read().unwrap();
+
+        f.debug_struct("IndexAPI")
+            .field("index_len", &index.len())
+            .field("items_len", &items.len())
+            .field("allowed_items_cardinality", &allowed_items.cardinality())
+            .finish()
+    }
 }
 
 fn union_with(index: &IndexAPI, other: &IndexAPI) -> PyResult<()> {

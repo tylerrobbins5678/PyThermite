@@ -1,18 +1,20 @@
 use std::{cell::UnsafeCell, collections::{hash_map::{Iter, ValuesMut}, BTreeMap, HashSet}, ops::{Bound, Range}, sync::{Arc, Weak}};
 
+use rand::seq::index;
 use rustc_hash::FxHashMap;
 use croaring::Bitmap;
 use ordered_float::OrderedFloat;
 use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyString}, Py, PyAny, PyObject, PyResult, Python};
 use smol_str::SmolStr;
 
-use crate::index::{value::{PyValue, RustCastValue}, BitMapBTree, HybridSet, Key};
+use crate::index::{stored_item::StoredItem, value::{PyValue, RustCastValue}, BitMapBTree, HybridSet, IndexAPI, Key};
 
 #[derive(Default)]
 pub struct QueryMap {
     exact: FxHashMap<PyValue, HybridSet>,
     num_ordered: BitMapBTree,
     parent: FxHashMap<u32, HybridSet>,
+    nested: IndexAPI,
 }
 
 unsafe impl Send for QueryMap {}
@@ -24,12 +26,11 @@ impl QueryMap {
             exact: FxHashMap::default(),
             num_ordered: BitMapBTree::new(),
             parent: FxHashMap::default(),
+            nested: IndexAPI::new(),
         }
     }
 
-    #[inline]
     pub fn insert(&mut self, value: &PyValue, obj_id: u32){
-
         
         if let Some(existing) = self.exact.get_mut(&value) {
             existing.add(obj_id);
@@ -38,7 +39,7 @@ impl QueryMap {
             let hybrid_set = HybridSet::of(&[obj_id]);
             self.exact.insert(value.clone(), hybrid_set);
         }
-        
+
         // Insert into the right ordered map based on primitive type
         match &value.get_primitive() {
             RustCastValue::Int(i) => {
@@ -52,6 +53,26 @@ impl QueryMap {
 //                    .or_insert_with(|| Arc::new(UnsafeCell::new(Bitmap::new())));
 //                unsafe { &mut *entry.get() }.add(obj_id);
             }
+            RustCastValue::Ind(index_api) => {
+                let (id, py_values, stored_item) = Python::with_gil(|py| {
+                    let index_api_ref = index_api.borrow(py);
+                    (
+                        index_api_ref.id,
+                        index_api_ref.py_values.clone(),
+                        StoredItem::new(Arc::new(index_api_ref.into())),
+                    )
+                });
+
+                if let Some(existing) = self.parent.get_mut(&id) {
+                    existing.add(obj_id);
+                } else {
+                    // lazily create only if needed
+                    let hybrid_set = HybridSet::of(&[obj_id]);
+                    self.parent.insert(id, hybrid_set);
+                }
+
+                self.nested.add_object(id, stored_item, py_values);
+            },
             RustCastValue::Unknown => {
                 // Optionally handle unknown types here or ignore
             }
@@ -100,6 +121,7 @@ impl QueryMap {
                 Key::FloatOrdered(OrderedFloat(*f))
             }
             RustCastValue::Str(_) => todo!(),
+            RustCastValue::Ind(index_api) => todo!(),
             RustCastValue::Unknown => todo!(),
         };
         self.num_ordered.remove(key, idx);
@@ -115,6 +137,16 @@ impl QueryMap {
         QueryMapIter {
             exact_iter: self.exact.iter(),
         }
+    }
+
+    pub fn get_parents(&self, child_bm: &Bitmap) -> Bitmap {
+        let mut parent_bm = HybridSet::new();
+        for idx in child_bm.iter() {
+            if let Some(parents) = self.parent.get(&idx) {
+                parent_bm.or_inplace(&parents);
+            }
+        }
+        parent_bm.as_bitmap()
     }
 
 }
@@ -142,6 +174,7 @@ impl QueryMap {
                 let mut result = Bitmap::new();
                 result
             }
+            RustCastValue::Ind(index_api) => todo!(),
             RustCastValue::Unknown => {
                 Bitmap::new()
             }
@@ -169,6 +202,7 @@ impl QueryMap {
                 let mut result = Bitmap::new();
                 result
             }
+            RustCastValue::Ind(index_api) => todo!(),
             RustCastValue::Unknown => {
                 Bitmap::new()
             }
@@ -195,6 +229,7 @@ impl QueryMap {
                 let mut result = Bitmap::new();
                 result
             }
+            RustCastValue::Ind(index_api) => todo!(),
             RustCastValue::Unknown => {
                 Bitmap::new()
             }
@@ -222,6 +257,7 @@ impl QueryMap {
                 let mut result = Bitmap::new();
                 result
             }
+            RustCastValue::Ind(index_api) => todo!(),
             RustCastValue::Unknown => {
                 Bitmap::new()
             }
@@ -233,6 +269,7 @@ impl QueryMap {
             RustCastValue::Int(i) => Key::Int(*i),
             RustCastValue::Float(f) => Key::FloatOrdered(OrderedFloat(*f)),
             RustCastValue::Str(s) => todo!(),
+            RustCastValue::Ind(index_api) => todo!(),
             RustCastValue::Unknown => todo!(),
         };
 
@@ -240,6 +277,7 @@ impl QueryMap {
             RustCastValue::Int(i) => Key::Int(*i),
             RustCastValue::Float(f) => Key::FloatOrdered(OrderedFloat(*f)),
             RustCastValue::Str(s) => todo!(),
+            RustCastValue::Ind(index_api) => todo!(),
             RustCastValue::Unknown => todo!(),
         };
 
@@ -431,6 +469,16 @@ impl PyQueryExpr {
     }
 }
 
+fn attr_parts(attr: SmolStr) -> (SmolStr, Option<SmolStr>) {
+    if let Some(pos) = attr.find('.') {
+        let (base, rest) = attr.split_at(pos);
+        let rest = &rest[1..];
+        (SmolStr::new(base), Some(SmolStr::new(rest)))
+    } else {
+        (attr, None)
+    }
+}
+
 pub fn evaluate_query(
     index: &FxHashMap<SmolStr, Box<QueryMap>>,
     all_valid: &Bitmap,
@@ -438,8 +486,16 @@ pub fn evaluate_query(
 ) -> Bitmap {
     match expr {
         QueryExpr::Eq(attr, value) => {
-            if let Some(qm) = index.get(attr){
-                qm.eq(value)
+            let (base_attr, nested_attr) = attr_parts(attr.clone());
+            if let Some(qm) = index.get(&base_attr){
+                if let Some(nested_attr) = nested_attr {
+                    let query = QueryExpr::Eq(nested_attr, value.clone());
+                    let wrapper = PyQueryExpr{ inner: query };
+                    let allowed_children = qm.nested.reduced_query(wrapper).allowed_items;
+                    qm.get_parents(&allowed_children)
+                } else {
+                    qm.eq(value)
+                }
             } else {
                 Bitmap::new()
             }

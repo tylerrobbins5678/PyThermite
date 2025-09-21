@@ -14,3 +14,4 @@ mod filtered_index;
 mod query;
 mod ranged_b_tree;
 mod hybrid_set;
+mod types;

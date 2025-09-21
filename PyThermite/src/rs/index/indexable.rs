@@ -8,6 +8,7 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use once_cell::sync::Lazy;
 
+use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::hash::{Hash, Hasher};
@@ -194,5 +195,14 @@ impl Hash for Indexable {
 impl PartialEq for Indexable {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self, other)
+    }
+}
+
+impl fmt::Debug for Indexable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IndexAPI")
+            .field("id", &self.id)
+            .field("attributes", &self.py_values)
+            .finish()
     }
 }

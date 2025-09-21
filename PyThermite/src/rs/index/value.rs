@@ -1,12 +1,45 @@
 use pyo3::{prelude::*, PyTypeInfo};
 use pyo3::types::PyAny;
-use std::{hash::{Hash, Hasher}, sync::Arc};
+use rustc_hash::FxHashMap;
+use smol_str::SmolStr;
+use std::ops::Deref;
+use std::sync::Arc;
+use std::{hash::{Hash, Hasher}};
+
+use crate::index::stored_item::StoredItem;
+use crate::index::{types, Indexable};
+
+struct IndexableBuilder {
+    attributes: FxHashMap<SmolStr, PyValue>,
+    stored_item: StoredItem,
+    id: u32,
+    indexable: Py<Indexable>,
+}
+
+impl IndexableBuilder {
+    pub fn new(indexable: Py<Indexable>, py: Python) -> Self {
+        let index = indexable.borrow(py);
+        let id = index.id;
+        let attributes = index.py_values.clone();
+
+        drop(index);
+
+        let stored_item = StoredItem::new(Arc::new(indexable.clone_ref(py)));
+        Self {
+            attributes,
+            stored_item,
+            id,
+            indexable,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum RustCastValue {
     Int(i64),
     Float(f64),
     Str(String),
+    Ind(Arc<Py<Indexable>>),
     Unknown,
 }
 
@@ -28,6 +61,8 @@ impl PyValue {
             RustCastValue::Float(obj.extract::<f64>().unwrap())
         } else if py_type.is(pyo3::types::PyString::type_object(obj.py())) {
             RustCastValue::Str(obj.extract::<String>().unwrap())
+        } else if py_type.is_subclass(types::indexable_type().bind(obj.py())).unwrap_or(false) {
+            RustCastValue::Ind(Arc::new(obj.extract::<Py<Indexable>>().unwrap()))
         } else {
             RustCastValue::Unknown
         };
