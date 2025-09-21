@@ -5,6 +5,7 @@ pub use indexable::Indexable;
 pub use query::PyQueryExpr;
 pub use ranged_b_tree::{Key, CompositeKey128, BitMapBTree};
 pub use hybrid_set::HybridSet;
+pub use filtered_index::FilteredIndex;
 
 mod py_dict_values;
 mod indexable;

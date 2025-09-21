@@ -5,7 +5,7 @@ use pyo3::{pyclass, pymethods, Bound, IntoPyObject, Py, PyAny, PyResult, Python}
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 
-use crate::index::{query::{filter_index_by_hashes, kwargs_to_hash_query, QueryMap}, stored_item::StoredItem, value::PyValue, Index, IndexAPI, Indexable};
+use crate::index::{query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, QueryMap}, stored_item::StoredItem, value::PyValue, Index, IndexAPI, Indexable, PyQueryExpr};
 
 
 
@@ -36,6 +36,17 @@ impl FilteredIndex{
                 allowed_items: filter_index_by_hashes(&index, &query).and(&self.allowed_items)
             })
         })
+    }
+
+    pub fn reduced_query(
+        &self,
+        query: PyQueryExpr,
+    ) -> FilteredIndex {
+        let index = self.index.read().unwrap();
+        let allowed = &self.allowed_items;
+        self.filter_from_bitmap(
+            evaluate_query(&index, &allowed, &query.inner).clone()
+        )
     }
 
     pub fn collect(&self, py:Python) -> PyResult<Vec<Py<Indexable>>> {
@@ -95,6 +106,14 @@ impl FilteredIndex{
             .map(|arc| items.get(arc as usize).unwrap().as_ref().unwrap().get_py_ref(py))
             .collect();
         Ok(results)
+    }
+
+    fn filter_from_bitmap(&self, bm: Bitmap) -> FilteredIndex {
+        FilteredIndex {
+            index: self.index.clone(),
+            items: self.items.clone(),
+            allowed_items: bm
+        }
     }
 
 }

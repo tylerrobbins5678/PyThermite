@@ -19,7 +19,7 @@ description = "Python object indexer for ETL, search for anything by anything"
 readme = "README.md"
 
 keywords = ["index", "search", "storage", "ETL", "ELT", "searchmeta"]
-dependencies = ["maturin (>=1.8.6,<2.0.0)"]
+dependencies = ["maturin (>=1.8.6,<2.0.0)", "pytest (>=8.4.2,<9.0.0)"]
 
 [project.optional-dependencies]
 dev = ["pip-tools"]

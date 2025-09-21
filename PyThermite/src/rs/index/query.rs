@@ -120,9 +120,9 @@ impl QueryMap {
             RustCastValue::Float(f) => {
                 Key::FloatOrdered(OrderedFloat(*f))
             }
-            RustCastValue::Str(_) => todo!(),
-            RustCastValue::Ind(index_api) => todo!(),
-            RustCastValue::Unknown => todo!(),
+            RustCastValue::Str(_) => return,
+            RustCastValue::Ind(_) => return,
+            RustCastValue::Unknown => return,
         };
         self.num_ordered.remove(key, idx);
     }
