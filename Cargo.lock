@@ -312,7 +312,7 @@ dependencies = [
 
 [[package]]
 name = "pythermite"
-version = "0.0.3-alpha"
+version = "0.0.5-alpha"
 dependencies = [
  "ahash",
  "croaring",
