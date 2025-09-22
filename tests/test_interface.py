@@ -61,6 +61,24 @@ def test_query(index):
     assert all(obj.active is True and obj.score > 50.0 for obj in result)
     assert len(result) == 2  # Should be objects with num 6 and 8
 
+def test_query_chain(index):
+    objs = [TestClass(num=i, active=(i % 2 == 0), score=float(i) * 10.0) for i in range(10)]
+    index.add_object_many(objs)
+
+    # First query
+    filtered_index = index.reduced(active=True)
+    # Second query on the filtered index
+    second_filtered_index = filtered_index.reduced_query(Q.gt("score", 50.0))
+    res = second_filtered_index.collect()
+    assert all(obj.active is True and obj.score > 50.0 for obj in res)
+    assert len(res) == 2  # Should be objects with num 6 and 8
+
+    final_filtered_index = second_filtered_index.reduced_query(Q.lt("num", 8))
+    final_res = final_filtered_index.collect()
+    assert all(obj.active is True and obj.score > 50.0 and obj.num < 8 for obj in final_res)
+    assert len(final_res) == 1  # Should be objects with num 6
+
+
 def test_filtered_index(index):
     objs = [TestClass(num=i, active=(i % 2 == 0), score=float(i) * 10.0) for i in range(10)]
     index.add_object_many(objs)

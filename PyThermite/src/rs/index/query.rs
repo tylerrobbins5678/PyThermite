@@ -14,7 +14,7 @@ pub struct QueryMap {
     exact: FxHashMap<PyValue, HybridSet>,
     num_ordered: BitMapBTree,
     parent: FxHashMap<u32, HybridSet>,
-    nested: IndexAPI,
+    nested: Arc<IndexAPI>,
 }
 
 unsafe impl Send for QueryMap {}
@@ -26,7 +26,7 @@ impl QueryMap {
             exact: FxHashMap::default(),
             num_ordered: BitMapBTree::new(),
             parent: FxHashMap::default(),
-            nested: IndexAPI::new(),
+            nested: Arc::new(IndexAPI::new()),
         }
     }
 
@@ -54,24 +54,27 @@ impl QueryMap {
 //                unsafe { &mut *entry.get() }.add(obj_id);
             }
             RustCastValue::Ind(index_api) => {
-                let (id, py_values, stored_item) = Python::with_gil(|py| {
-                    let index_api_ref = index_api.borrow(py);
-                    (
-                        index_api_ref.id,
-                        index_api_ref.py_values.clone(),
-                        StoredItem::new(Arc::new(index_api_ref.into())),
-                    )
+                
+                Python::with_gil(|py| {
+                    let mut index_api_ref = index_api.borrow_mut(py);
+                    let id = index_api_ref.id;
+                    let py_values = index_api_ref.py_values.clone();
+                    
+                    if let Some(existing) = self.parent.get_mut(&id) {
+                        existing.add(obj_id);
+                    } else {
+                        // lazily create only if needed
+                        let hybrid_set = HybridSet::of(&[obj_id]);
+                        self.parent.insert(id, hybrid_set);
+                    }
+                    
+                    // register the index in the object
+                    index_api_ref.add_index(Arc::downgrade(&self.nested));
+                    
+                    let stored_item = StoredItem::new(Arc::new(index_api_ref.into()));
+                    self.nested.add_object(id, stored_item, py_values);
                 });
 
-                if let Some(existing) = self.parent.get_mut(&id) {
-                    existing.add(obj_id);
-                } else {
-                    // lazily create only if needed
-                    let hybrid_set = HybridSet::of(&[obj_id]);
-                    self.parent.insert(id, hybrid_set);
-                }
-
-                self.nested.add_object(id, stored_item, py_values);
             },
             RustCastValue::Unknown => {
                 // Optionally handle unknown types here or ignore

@@ -20,6 +20,59 @@ def index():
     return Index()
 
 
+def test_string(index):
+    objs = [TestClass(name=f"object_{i}") for i in range(5)]
+    index.add_object_many(objs)
+
+    query = Q.eq("name", "object_3")
+    result = index.reduced_query(query)
+    assert len(result.collect()) == 1
+    assert result.collect()[0].name == "object_3"
+
+    for r in result.collect():
+        r.child = TestClass(name="child_of")
+
+    nested_result = index.reduced_query(Q.eq("child.name", "child_of"))
+    assert len(nested_result.collect()) == 1
+    assert nested_result.collect()[0].name == "object_3"
+
+def test_nest_before_index(index):
+    objs = [TestClass(name=f"object_{i}") for i in range(5)]
+    for obj in objs:
+        obj.child = TestClass(name="child_of", grandchild=TestClass(name="grandchild_of"))
+    index.add_object_many(objs)
+    nested_result = index.reduced_query(Q.eq("child.name", "child_of"))
+    tripple_nested_result = index.reduced_query(Q.eq("child.grandchild.name", "grandchild_of"))
+
+    assert len(nested_result.collect()) == 5
+    assert all(r.child.name == "child_of" for r in nested_result.collect())
+
+    assert len(tripple_nested_result.collect()) == 5
+    assert all(r.child.grandchild.name == "grandchild_of" for r in tripple_nested_result.collect())
+
+
+def test_tripple_nest_after_index(index):
+    objs = [TestClass(name=f"object_{i}") for i in range(5)]
+    index.add_object_many(objs)
+
+    query = Q.eq("name", "object_3")
+    result = index.reduced_query(query)
+    assert len(result.collect()) == 1
+    assert result.collect()[0].name == "object_3"
+
+    for r in result.collect():
+        r.child = TestClass(name="child_of")
+
+    nested_result = index.reduced_query(Q.eq("child.name", "child_of"))
+    assert len(nested_result.collect()) == 1
+    assert nested_result.collect()[0].name == "object_3"
+
+    nested_result.collect()[0].child.grandchild = TestClass(name="grandchild_of")
+    tripple_nested_result = index.reduced_query(Q.eq("child.grandchild.name", "grandchild_of"))
+    assert len(tripple_nested_result.collect()) == 1
+    assert tripple_nested_result.collect()[0].name == "object_3"
+
+
 def test_nested_object_query_in(index):
     class NestedTestClass(Indexable):
         pass
