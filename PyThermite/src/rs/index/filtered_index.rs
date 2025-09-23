@@ -108,7 +108,8 @@ impl FilteredIndex{
         Ok(results)
     }
 
-    fn filter_from_bitmap(&self, bm: Bitmap) -> FilteredIndex {
+    fn filter_from_bitmap(&self, mut bm: Bitmap) -> FilteredIndex {
+        bm.and_inplace(&self.allowed_items);
         FilteredIndex {
             index: self.index.clone(),
             items: self.items.clone(),

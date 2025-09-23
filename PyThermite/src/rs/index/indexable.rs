@@ -27,9 +27,10 @@ struct IndexMeta{
     index: Weak<IndexAPI>,
 }
 
-#[pyclass(subclass)]
+#[pyclass(subclass, freelist = 512)]
+
 pub struct Indexable{
-    meta: SmallVec<[IndexMeta; 2]>,
+    meta: SmallVec<[IndexMeta; 4]>,
     pub py_values: FxHashMap<SmolStr, PyValue>,
     pub id: u32
 }
@@ -51,8 +52,8 @@ impl Indexable{
             let capacity = dict.len();
             py_values = FxHashMap::with_capacity_and_hasher(capacity, Default::default());
             for (key, value) in dict.iter() {
-                if let Ok(key_str) = key.downcast::<PyString>() {
-                    let key_string = SmolStr::new(key_str.to_str().unwrap_or(""));
+                if let Ok(key_str) = key.extract::<&str>() {
+                    let key_string = SmolStr::new(key_str);
                     py_values.insert(key_string, PyValue::new(value));
                 }
             }
@@ -99,12 +100,12 @@ impl Indexable{
 
         let rust_self = self_.borrow();
         
-        let arcs: SmallVec<[Arc<IndexAPI>;2]> = rust_self.meta
+        let arcs: SmallVec<[Arc<IndexAPI>; 4]> = rust_self.meta
             .iter()
             .filter_map(|ind| ind.index.upgrade())
             .collect();
 
-        let mut index_read_locks: SmallVec<[std::sync::RwLockReadGuard<'_, std::collections::HashMap<SmolStr, Box<super::query::QueryMap>, rustc_hash::FxBuildHasher>>; 2]> = SmallVec::new();
+        let mut index_read_locks: SmallVec<[std::sync::RwLockReadGuard<'_, std::collections::HashMap<SmolStr, Box<super::query::QueryMap>, rustc_hash::FxBuildHasher>>; 4]> = SmallVec::new();
         
         for ind in arcs.iter() {
             let guard = ind.index.read().unwrap();
@@ -152,7 +153,7 @@ impl Indexable{
     }
 
     fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("<MyClass with {} attributes>", self.py_values.len()))
+        Ok(format!("<Indexable with {} attributes>", self.py_values.len()))
     }
 }
 

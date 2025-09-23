@@ -73,6 +73,27 @@ def test_tripple_nest_after_index(index):
     assert tripple_nested_result.collect()[0].name == "object_3"
 
 
+def test_filtered_index_chain(index):
+    objs = [TestClass(name=f"object_{i}", common=True) for i in range(5)]
+    index.add_object_many(objs)
+
+    query = Q.in_("name", ["object_1", "object_3"])
+    result = index.reduced_query(query)
+    assert len(result.collect()) == 2
+    assert all(r.name in ["object_1", "object_3"] for r in result.collect())
+
+    for r in result.collect():
+        r.child = TestClass(name="child_of")
+
+    nested_result = index.reduced_query(Q.eq("child.name", "child_of"))
+    assert len(nested_result.collect()) == 2
+    assert all(r.child.name == "child_of" for r in nested_result.collect())
+
+    tripple_nested_result = nested_result.reduced_query(Q.eq("common", True))
+    assert len(tripple_nested_result.collect()) == 2
+    assert all(r.child.name == "child_of" for r in nested_result.collect())
+
+
 def test_nested_object_query_in(index):
     class NestedTestClass(Indexable):
         pass
