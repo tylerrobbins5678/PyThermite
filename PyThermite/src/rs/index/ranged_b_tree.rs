@@ -1,6 +1,5 @@
 use std::cmp::{Ordering};
 use std::ops::Bound;
-use std::ptr;
 use croaring::Bitmap;
 
 const MAX_KEYS: usize = 96;
@@ -465,7 +464,7 @@ impl InternalNode {
         }
     }
 
-    pub fn get_key_index(&self, key: &Key, mode: Positioning) -> usize {
+    fn get_key_index(&self, key: &Key, mode: Positioning) -> usize {
         // Find child index to recurse into
         let keys = &self.keys[self.offset..self.offset + self.num_keys];
 
@@ -865,11 +864,13 @@ impl LeafNode {
         // Decide whether to shift left or right
         if remove_index < self.num_keys / 2 {
             self.shift_right(self.offset, self.offset + remove_index, 1);
+            self.offset += 1;
         } else {
             self.shift_left(self.offset + remove_index, self.offset + self.num_keys, 1);
             self.offset -= 1;
         }
 
+        self.num_keys -= 1;
         true
     }
 
