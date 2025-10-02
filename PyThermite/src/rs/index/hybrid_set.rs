@@ -13,7 +13,7 @@ pub enum HybridSet {
 }
 
 #[derive(Clone, Debug)]
-struct Small {
+pub struct Small {
     len: usize,
     data: [u32; SMALL_LIMIT] 
 }
@@ -131,8 +131,8 @@ impl HybridSet {
                     }
             (HybridSet::Empty, HybridSet::Small(small)) => other.clone(),
             (HybridSet::Empty, HybridSet::Large(bitmap)) => other.clone(),
-            (HybridSet::Small(small), HybridSet::Empty) => self.clone(),
-            (HybridSet::Large(bitmap), HybridSet::Empty) => self.clone(),
+            (HybridSet::Small(small), HybridSet::Empty) => HybridSet::Small(small),
+            (HybridSet::Large(bitmap), HybridSet::Empty) => HybridSet::Large(bitmap),
             (HybridSet::Empty, HybridSet::Empty) => HybridSet::Empty,
         };
 
@@ -158,7 +158,7 @@ impl HybridSet {
                 bitmap.and_inplace(&bitmap_other);
                 HybridSet::Large(bitmap)
             }
-            _ => unimplemented!(),
+            _ => HybridSet::Small(Small::new()),
         };
 
         *self = replacement;
@@ -188,13 +188,13 @@ impl HybridSet {
         match self {
             HybridSet::Small(sm) => sm.data[..sm.len].contains(&val),
             HybridSet::Large(bmp) => bmp.contains(val),
-            HybridSet::Empty => unimplemented!()
+            HybridSet::Empty => false
         }
     }
 
     pub fn iter(&self) -> HybridSetIter<'_> {
         match self {
-            HybridSet::Empty => HybridSetIter::Small([].iter()), // or panic/unimplemented as you have
+            HybridSet::Empty => HybridSetIter::Small([].iter()),
             HybridSet::Small(small) => HybridSetIter::Small(small.as_slice().iter()),
             HybridSet::Large(bitmap) => HybridSetIter::Large(bitmap.iter()),
         }

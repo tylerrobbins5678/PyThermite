@@ -36,7 +36,6 @@ impl<'py> StoredItem {
         let mut res = HybridSet::new();
         if let Some(parent) = &self.parent {
             if let Some(index) = parent.index.upgrade() {
-                eprintln!("calling from StoredItem");
                 res.or_inplace(&index.get_ids_to_root(parent.id));
                 res.add(parent.id);
                 res

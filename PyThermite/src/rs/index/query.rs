@@ -31,7 +31,7 @@ impl QueryMap {
     }
 
     pub fn insert(&mut self, value: &PyValue, obj_id: u32){
-        
+
         if let Some(existing) = self.exact.get_mut(&value) {
             existing.add(obj_id);
         } else {
@@ -48,56 +48,42 @@ impl QueryMap {
             RustCastValue::Float(f) => {
                 self.num_ordered.insert(Key::FloatOrdered(OrderedFloat(*f)), obj_id);
             }
-            RustCastValue::Str(s) => {
-//                let entry = self.str_ordered.entry(s.clone())
-//                    .or_insert_with(|| Arc::new(UnsafeCell::new(Bitmap::new())));
-//                unsafe { &mut *entry.get() }.add(obj_id);
-            }
             RustCastValue::Ind(index_obj) => {
 
                 let mut path = HybridSet::new();
 
                 if let Some(parent) = self.parent.upgrade() {
-                    eprintln!("calling from Query");
                     path = parent.get_parents_from_stored_item(obj_id as usize);
                 }
 
-                if path.contains(obj_id){
-                    eprintln!("early exit on recursion");
-                    return;
-                } else {
-                    eprintln!("id {} : path {:?}",obj_id, path);
-                }
-                
-                let (id, py_values, weak_nested) = Python::with_gil(|py| {
-                    eprintln!("borrowing index_obj {:?}", index_obj.as_ptr());
+                let res = Python::with_gil(|py| {
                     let index_obj_ref = index_obj.try_borrow(py).expect("cannot borrow, owned by other object");
-                    eprintln!("borrowed index_obj {:?}", index_obj.as_ptr());
                     let id: u32 = index_obj_ref.id;
 
-                    eprintln!("calling py values {:?}", index_obj.as_ptr());
+                    if path.contains(id){
+                        return None;
+                    }
                     let py_values = index_obj_ref.get_py_values().clone();
-                    eprintln!("Py values got {:?}", index_obj.as_ptr());
 
                     // register the index in the object
                     let weak_nested = Arc::downgrade(&self.nested);
-                    eprintln!("adding to index {:?}", index_obj.as_ptr());
                     index_obj_ref.add_index(weak_nested.clone());
-                    eprintln!("addied to index {:?}", index_obj.as_ptr());
-                    (id, py_values, weak_nested)
+                    Some((id, py_values, weak_nested))
                 });
 
-                let stored_parent = StoredItemParent {
-                    id: obj_id,
-                    path_to_root: path,
-                    index: weak_nested.clone(),
-                };
+                if let Some((id, py_values, weak_nested)) = res {
+                    let stored_parent = StoredItemParent {
+                        id: obj_id,
+                        path_to_root: path,
+                        index: weak_nested.clone(),
+                    };
+    
+                    let stored_item = StoredItem::new(index_obj.clone(), Some(stored_parent));
+                    self.nested.add_object(weak_nested, id, stored_item, py_values);
+                }
 
-                let stored_item = StoredItem::new(index_obj.clone(), Some(stored_parent));
-                self.nested.add_object(weak_nested, id, stored_item, py_values);
             },
-            RustCastValue::Unknown => {
-                // Optionally handle unknown types here or ignore
+            RustCastValue::Unknown | RustCastValue::Str(_) => {
             }
         }
     }
@@ -146,22 +132,18 @@ impl QueryMap {
             RustCastValue::Str(_) => return,
             RustCastValue::Ind(indexable) => {
                 Python::with_gil(| py | {
-                    eprintln!("Removing from indexable {:?}", indexable.as_ptr());
 
                     let mut path = HybridSet::new();
                     if let Some(parent) = self.parent.upgrade() {
-                        eprintln!("calling from Query");
                         path = parent.get_parents_from_stored_item(idx as usize);
                     }
 
-                    if path.contains(idx){
-                        eprintln!("early exit on recursion from removal");
+                    let to_insert = indexable.borrow(py);
+                    if path.contains(to_insert.id){
                         return;
-                    } else {
-                        eprintln!("id {} : path {:?}",idx, path);
                     }
 
-                    self.nested.remove(indexable.borrow(py).deref());
+                    self.nested.remove(to_insert.deref());
                 });
             },
             RustCastValue::Unknown => return,

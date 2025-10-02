@@ -6,7 +6,7 @@ use rand::seq::IndexedRandom;
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 
-use crate::index::{filtered_index::FilteredIndex, query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, PyQueryExpr, QueryMap}, stored_item, HybridSet, Indexable};
+use crate::index::{filtered_index::FilteredIndex, query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, PyQueryExpr, QueryMap}, stored_item, HybridHashmap, HybridSet, Indexable};
 
 use super::stored_item::StoredItem;
 use super::value::PyValue;
@@ -76,7 +76,6 @@ impl Index {
 
         let raw_objs: Vec<&Indexable> = py_handled_refs.iter()
             .map(| obj | {
-                eprintln!("inserting with pointers {:?}", obj.as_ptr());
                 obj.deref()
             })
             .collect();
@@ -92,12 +91,7 @@ impl Index {
 
     pub fn add_object(&mut self, py: Python, py_ref: PyRef<Indexable>) -> PyResult<()> {
 
-        let mut py_val_hashmap: FxHashMap<SmolStr, PyValue> = FxHashMap::default();
-        for (key, value) in py_ref.get_py_values().iter(){
-            if key.starts_with("_"){continue;}
-            py_val_hashmap.insert(key.clone(), value.clone());
-        }
-
+        let py_val_hashmap = py_ref.get_py_values().clone();
         let idx = py_ref.id;
         let py_obj: Py<Indexable> = py_ref.into_pyobject(py)?.unbind();
         let py_obj_arc = Arc::new(py_obj);
@@ -169,7 +163,6 @@ impl IndexAPI{
             if let Some(item) = items_reader[idx as usize].as_ref(){
                 if let Some(parent_id) = item.get_parent_id() {
                     result.add(parent_id as u32);
-                    eprintln!("Found parent id: {} linked from child {}", parent_id, idx);
                 }
             }
         }
@@ -236,7 +229,7 @@ impl IndexAPI{
 
         for py_ref in raw_objs {
             allowed_writer.add(py_ref.id);
-            for (key, value) in py_ref.get_py_values().iter(){
+            for (key, value) in (*py_ref.get_py_values()).iter(){
                 if key.starts_with("_"){continue;}
                 _add_index(&mut index, weak_self.clone(), py_ref.id, key.clone(), value);
             }
@@ -248,7 +241,7 @@ impl IndexAPI{
         weak_self: Weak<IndexAPI>,
         idx: u32,
         stored_item: StoredItem,
-        py_val_hashmap: FxHashMap<SmolStr, PyValue>
+        py_val_hashmap: Arc<HybridHashmap<SmolStr, PyValue>>
     ) {
 
         self.get_allowed_items_writer().add(idx);
@@ -257,7 +250,7 @@ impl IndexAPI{
             if items_writer.len() <= idx as usize{
                 items_writer.resize(idx as usize + 1, None);
             }
-            
+
             items_writer[idx as usize] = Some(stored_item);
         }
 
@@ -270,14 +263,18 @@ impl IndexAPI{
 
     pub fn remove(&self, item: &Indexable) {
 
-        eprintln!("have borrowed object {:p}", item);
         let mut index = self.get_index_writer();
         let item_id = item.id;
 
-        for (key, value) in item.get_py_values().iter(){
+        for (key, value) in (*item.get_py_values()).iter(){
             if key.starts_with("_"){continue;}
             _remove_index(&mut index, item_id, &key, value);
         }
+
+        self.get_allowed_items_writer().remove(item_id);
+        let mut writer = self.get_items_writer();
+        writer[item_id as usize] = None;
+
     }
 
     pub fn reduce<'py>(
@@ -305,7 +302,7 @@ impl IndexAPI{
 
             let py_item = item.borrow_py_ref(py);
             
-            for (attr, val) in py_item.get_py_values().iter() {
+            for (attr, val) in (*py_item.get_py_values()).iter() {
                 if attr.starts_with("_") {
                     continue;
                 }
@@ -427,29 +424,34 @@ impl IndexAPI{
     }
 
     fn get_items_writer(&self) -> RwLockWriteGuard<Vec<Option<StoredItem>>> {
-        self.items.try_write().expect("items writer deadlock")
+        self.items.write().unwrap()
+        //self.items.try_write().expect("items writer deadlock")
     }
 
     fn get_items_reader(&self) -> RwLockReadGuard<Vec<Option<StoredItem>>> {
-        self.items.try_read().expect("cannot read from items")
+        self.items.read().unwrap()
+        //self.items.try_read().expect("cannot read from items")
     }
 
     pub fn get_index_writer(&self) -> RwLockWriteGuard<FxHashMap<SmolStr, Box<QueryMap>>> {
-        self.index.try_write().expect("index writer deadlock")
+        self.index.write().unwrap()
+        //self.index.try_write().expect("index writer deadlock")
     }
 
     pub fn get_index_reader(&self) -> RwLockReadGuard<FxHashMap<SmolStr, Box<QueryMap>>> {
-        self.index.try_read().expect("cannot read from index")
+        self.index.read().unwrap()
+        //self.index.try_read().expect("cannot read from index")
     }
 
     fn get_allowed_items_writer(&self) -> RwLockWriteGuard<Bitmap> {
-        self.allowed_items.try_write().expect("index writer deadlock")
+        self.allowed_items.write().unwrap()
+        //self.allowed_items.try_write().expect("index writer deadlock")
     }
 
     fn get_allowed_items_reader(&self) -> RwLockReadGuard<Bitmap> {
-        self.allowed_items.try_read().expect("cannot read from index")
+        self.allowed_items.read().unwrap()
+        //self.allowed_items.try_read().expect("cannot read from index")
     }
-
 }
 
 impl fmt::Debug for IndexAPI {

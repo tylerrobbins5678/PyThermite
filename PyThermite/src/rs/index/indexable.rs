@@ -1,4 +1,5 @@
 use ahash::HashMapExt;
+use arc_swap::Guard;
 use pyo3::exceptions::PyAttributeError;
 use pyo3::types::PyDictMethods;
 use pyo3::types::PyStringMethods;
@@ -7,6 +8,7 @@ use pyo3::{ffi, IntoPyObjectExt, PyErr, PyRef};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use once_cell::sync::Lazy;
+use arc_swap::ArcSwap;
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,6 +22,7 @@ use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyDict, PyList, PyString, P
 use smol_str::SmolStr;
 
 use crate::index::value::PyValue;
+use crate::index::HybridHashmap;
 use crate::index::{stored_item::StoredItem, IndexAPI};
 
 static GLOBAL_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -33,7 +36,7 @@ struct IndexMeta{
 
 pub struct Indexable{
     meta: Mutex<SmallVec<[IndexMeta; 4]>>,
-    pub py_values: RwLock<FxHashMap<SmolStr, PyValue>>,
+    pub py_values: ArcSwap<HybridHashmap<SmolStr, PyValue>>,
     pub id: u32
 }
 
@@ -48,11 +51,10 @@ impl Indexable{
         _args: &Bound<'_, PyAny>, kwargs: Option<&Bound<'_, PyDict>>
     ) -> Self {
 
-        let mut py_values: FxHashMap<SmolStr, PyValue>;
+        let mut py_values: HybridHashmap<SmolStr, PyValue>;
 
         if let Some(dict) = kwargs {
-            let capacity = dict.len();
-            py_values = FxHashMap::with_capacity_and_hasher(capacity, Default::default());
+            py_values = HybridHashmap::Small(SmallVec::new());
             for (key, value) in dict.iter() {
                 if let Ok(key_str) = key.extract::<&str>() {
                     let key_string = SmolStr::new(key_str);
@@ -60,13 +62,13 @@ impl Indexable{
                 }
             }
         } else {
-            py_values = FxHashMap::new();
+            py_values = HybridHashmap::Small(SmallVec::new());
         }
 
         Self {
             meta: Mutex::new(SmallVec::new()),
             id: GLOBAL_ID_COUNTER.fetch_add(1, Ordering::SeqCst) as u32,
-            py_values: RwLock::new(py_values)
+            py_values: ArcSwap::from_pointee(py_values),
         }
     }
 
@@ -90,28 +92,16 @@ impl Indexable{
         });
 
         // update value
-        self.py_values.write().unwrap().insert(SmolStr::new(name), val);
+        let mut new_map = (*self.py_values.load_full()).clone();
+        new_map.insert(SmolStr::new(name), val);
+        self.py_values.store(Arc::new(new_map));
         Ok(())
     }
 
     #[inline(always)]
     fn __getattribute__(self_: Bound<'_, Self>, py: Python, name: Bound<'_, PyString>) -> PyResult<PyObject> {
 
-        // aquire locks to prove nobody is writing
-
         let rust_self = self_.borrow();
-        
-        let arcs: SmallVec<[Arc<IndexAPI>; 4]> = rust_self.meta
-            .lock().unwrap().iter()
-            .filter_map(|ind| ind.index.upgrade())
-            .collect();
-
-        let mut index_read_locks: SmallVec<[std::sync::RwLockReadGuard<'_, std::collections::HashMap<SmolStr, Box<super::query::QueryMap>, rustc_hash::FxBuildHasher>>; 4]> = SmallVec::new();
-        
-        for ind in arcs.iter() {
-            let guard = ind.get_index_reader();
-            index_read_locks.push(guard);
-        }
 
         let name_str = match name.to_str() {
             Ok(s) => s,
@@ -189,8 +179,8 @@ impl Indexable {
         Self::trim_indexes(&mut meta_lock, index);
     }
 
-    pub fn get_py_values(&self) -> RwLockReadGuard<FxHashMap<SmolStr, PyValue>>{
-        self.py_values.try_read().expect("Lock contested single threaded")
+    pub fn get_py_values(&self) -> Guard<Arc<HybridHashmap<SmolStr, PyValue>>>{
+        self.py_values.load()
     }
 }
 

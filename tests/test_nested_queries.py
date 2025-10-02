@@ -199,7 +199,10 @@ def test_recursive_ownership(index):
     result[0].inner = 7
     t_res = index.reduced_query(Q.eq("inner.outer.x", "y")).collect()
     assert len(t_res) == 0
-    result[0].inner = pre_inner
+
+    t_res = index.reduced_query(Q.eq("inner", 7)).collect()
+    assert len(t_res) == 1
+    result[0].inner_other = pre_inner
 
     result = index.reduced_query(Q.eq("inner.outer.inner.num", 2)).collect()
     assert len(result) == 0 # do not index children
@@ -235,21 +238,25 @@ def test_recursive_ownership_1(index):
     outer_nums = [obj.num for obj in result]
     assert outer_nums == [2, 3, 4, 5]
 
-    result = index.reduced_query(Q.eq("inner.outer.num", 2)).collect()
+    result = index.reduced_query(Q.eq("inner.num", 20)).collect()
     assert len(result) == 1
     assert result[0].num == 2
+    assert result[0].inner.num == 20
 
-    r = index.reduced_query(Q.eq("inner.outer.inner.num", 2)).collect()
+    r = index.reduced_query(Q.eq("inner.outer.num", 2)).collect()
     assert len(r) == 0 # do not index children
 
     result[0].inner.outer.x = "y"
-    result = index.reduced_query(Q.eq("inner.outer.x", "y")).collect()
+    result = index.reduced_query(Q.eq("x", "y")).collect()
     assert len(result) == 1
+    assert result[0].x == "y"
     assert result[0].inner.outer.x == "y"
 
     result[0].inner = 7
-    t_res = index.reduced_query(Q.eq("inner.outer.x", "y")).collect()
-    assert len(t_res) == 0
+    t_res = index.reduced_query(Q.eq("inner", 7)).collect()
+    assert len(t_res) == 1
+    assert t_res[0].inner == 7
+
 
 if __name__ == "__main__":
-    test_recursive_ownership(Index())
+    test_recursive_ownership_1(Index())
