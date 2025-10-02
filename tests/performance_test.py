@@ -86,7 +86,8 @@ def test_performance(prep_data_fixture):
     py_objects = [row for row in data]
 
     start = time.perf_counter()
-    df = pd.DataFrame([r.to_dict() for r in data])
+    cols = ["id", "age", "score", "active", "country", "group", "tags"]
+    df = pd.DataFrame(prep_data_fixture, columns=cols)
 
     pandas_build_time = time.perf_counter() - start
     mem_pix = mem_usage_mb()

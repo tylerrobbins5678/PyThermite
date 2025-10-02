@@ -172,3 +172,91 @@ def test_nested_object_query_between(index):
     result = index.reduced_query(query).collect()
     assert len(result) == 5
     assert all(obj.nested.num in [50, 60, 70, 80, 90] for obj in result)
+
+def test_recursive_ownership(index):
+    class Inner(Indexable):
+        pass
+
+    class Outer(Indexable):
+        pass
+
+    # Each Outer has an Inner, and each Inner also points back to another Outer (recursive chain).
+    outers = []
+    for i in range(6):
+        inner = Inner(num=i * 10)
+        outer = Outer(num=i, inner=inner)
+        inner.outer = outer
+        outers.append(outer)
+
+    # Add objects (this should also add their nested children)
+    index.add_object_many(outers)
+
+    # Query across the recursive Inner objects
+    query = Q.bt("inner.num", 20, 50)  # should capture 20, 30, 40, 50
+    result = index.reduced_query(query).collect()
+
+    pre_inner = result[0].inner
+    result[0].inner = 7
+    t_res = index.reduced_query(Q.eq("inner.outer.x", "y")).collect()
+    assert len(t_res) == 0
+
+    t_res = index.reduced_query(Q.eq("inner", 7)).collect()
+    assert len(t_res) == 1
+    result[0].inner_other = pre_inner
+
+    result = index.reduced_query(Q.eq("inner.outer.inner.num", 2)).collect()
+    assert len(result) == 0 # do not index children
+
+def test_recursive_ownership_1(index):
+    class Inner(Indexable):
+        pass
+
+    class Outer(Indexable):
+        pass
+
+    # Each Outer has an Inner, and each Inner also points back to another Outer (recursive chain).
+    outers = []
+    for i in range(6):
+        inner = Inner(num=i * 10)
+        outer = Outer(num=i, inner=inner)
+        inner.outer = outer
+        outers.append(outer)
+
+    # Add objects (this should also add their nested children)
+    index.add_object_many(outers)
+
+    # Query across the recursive Inner objects
+    query = Q.bt("inner.num", 20, 50)  # should capture 20, 30, 40, 50
+    result = index.reduced_query(query).collect()
+
+    # Ensure we got the correct number of results
+    assert len(result) == 4
+    nums = [obj.inner.num for obj in result]
+    assert all(n in [20, 30, 40, 50] for n in nums)
+
+    # And check that parent Outer.num values align with expectations
+    outer_nums = [obj.num for obj in result]
+    assert outer_nums == [2, 3, 4, 5]
+
+    result = index.reduced_query(Q.eq("inner.num", 20)).collect()
+    assert len(result) == 1
+    assert result[0].num == 2
+    assert result[0].inner.num == 20
+
+    r = index.reduced_query(Q.eq("inner.outer.num", 2)).collect()
+    assert len(r) == 0 # do not index children
+
+    result[0].inner.outer.x = "y"
+    result = index.reduced_query(Q.eq("x", "y")).collect()
+    assert len(result) == 1
+    assert result[0].x == "y"
+    assert result[0].inner.outer.x == "y"
+
+    result[0].inner = 7
+    t_res = index.reduced_query(Q.eq("inner", 7)).collect()
+    assert len(t_res) == 1
+    assert t_res[0].inner == 7
+
+
+if __name__ == "__main__":
+    test_recursive_ownership_1(Index())

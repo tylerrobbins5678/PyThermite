@@ -1,4 +1,4 @@
-use std::{cell::UnsafeCell, collections::{hash_map::{Iter, ValuesMut}, BTreeMap, HashSet}, ops::{Bound, Range}, sync::{Arc, Weak}};
+use std::{cell::UnsafeCell, collections::{hash_map::{Iter, ValuesMut}, BTreeMap, HashSet}, ops::{Bound, Deref, Range}, sync::{Arc, Weak}};
 
 use rand::seq::index;
 use rustc_hash::FxHashMap;
@@ -7,13 +7,13 @@ use ordered_float::OrderedFloat;
 use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyString}, Py, PyAny, PyObject, PyResult, Python};
 use smol_str::SmolStr;
 
-use crate::index::{stored_item::StoredItem, value::{PyValue, RustCastValue}, BitMapBTree, HybridSet, IndexAPI, Key};
+use crate::index::{stored_item::{StoredItem, StoredItemParent}, value::{PyValue, RustCastValue}, BitMapBTree, HybridSet, Index, IndexAPI, Key};
 
 #[derive(Default)]
 pub struct QueryMap {
     exact: FxHashMap<PyValue, HybridSet>,
+    parent: Weak<IndexAPI>,
     num_ordered: BitMapBTree,
-    parent: FxHashMap<u32, HybridSet>,
     nested: Arc<IndexAPI>,
 }
 
@@ -21,17 +21,17 @@ unsafe impl Send for QueryMap {}
 unsafe impl Sync for QueryMap {}
 
 impl QueryMap {
-    pub fn new() -> Self{
+    pub fn new(parent: Weak<IndexAPI>) -> Self{
         Self{
             exact: FxHashMap::default(),
+            parent: parent.clone(),
             num_ordered: BitMapBTree::new(),
-            parent: FxHashMap::default(),
-            nested: Arc::new(IndexAPI::new()),
+            nested: Arc::new(IndexAPI::new(Some(parent))),
         }
     }
 
     pub fn insert(&mut self, value: &PyValue, obj_id: u32){
-        
+
         if let Some(existing) = self.exact.get_mut(&value) {
             existing.add(obj_id);
         } else {
@@ -48,36 +48,42 @@ impl QueryMap {
             RustCastValue::Float(f) => {
                 self.num_ordered.insert(Key::FloatOrdered(OrderedFloat(*f)), obj_id);
             }
-            RustCastValue::Str(s) => {
-//                let entry = self.str_ordered.entry(s.clone())
-//                    .or_insert_with(|| Arc::new(UnsafeCell::new(Bitmap::new())));
-//                unsafe { &mut *entry.get() }.add(obj_id);
-            }
-            RustCastValue::Ind(index_api) => {
-                
-                Python::with_gil(|py| {
-                    let mut index_api_ref = index_api.borrow_mut(py);
-                    let id = index_api_ref.id;
-                    let py_values = index_api_ref.py_values.clone();
-                    
-                    if let Some(existing) = self.parent.get_mut(&id) {
-                        existing.add(obj_id);
-                    } else {
-                        // lazily create only if needed
-                        let hybrid_set = HybridSet::of(&[obj_id]);
-                        self.parent.insert(id, hybrid_set);
+            RustCastValue::Ind(index_obj) => {
+
+                let mut path = HybridSet::new();
+
+                if let Some(parent) = self.parent.upgrade() {
+                    path = parent.get_parents_from_stored_item(obj_id as usize);
+                }
+
+                let res = Python::with_gil(|py| {
+                    let index_obj_ref = index_obj.try_borrow(py).expect("cannot borrow, owned by other object");
+                    let id: u32 = index_obj_ref.id;
+
+                    if path.contains(id){
+                        return None;
                     }
-                    
+                    let py_values = index_obj_ref.get_py_values().clone();
+
                     // register the index in the object
-                    index_api_ref.add_index(Arc::downgrade(&self.nested));
-                    
-                    let stored_item = StoredItem::new(Arc::new(index_api_ref.into()));
-                    self.nested.add_object(id, stored_item, py_values);
+                    let weak_nested = Arc::downgrade(&self.nested);
+                    index_obj_ref.add_index(weak_nested.clone());
+                    Some((id, py_values, weak_nested))
                 });
 
+                if let Some((id, py_values, weak_nested)) = res {
+                    let stored_parent = StoredItemParent {
+                        id: obj_id,
+                        path_to_root: path,
+                        index: weak_nested.clone(),
+                    };
+    
+                    let stored_item = StoredItem::new(index_obj.clone(), Some(stored_parent));
+                    self.nested.add_object(weak_nested, id, stored_item, py_values);
+                }
+
             },
-            RustCastValue::Unknown => {
-                // Optionally handle unknown types here or ignore
+            RustCastValue::Unknown | RustCastValue::Str(_) => {
             }
         }
     }
@@ -116,18 +122,32 @@ impl QueryMap {
         if let Some(hybrid_set) = self.exact.get_mut(py_value) {
             hybrid_set.remove(idx);
         }
-        let key = match &py_value.get_primitive(){
+        match &py_value.get_primitive(){
             RustCastValue::Int(i) => {
-                Key::Int(*i)
+                self.num_ordered.remove(Key::Int(*i), idx);
             }
             RustCastValue::Float(f) => {
-                Key::FloatOrdered(OrderedFloat(*f))
+                self.num_ordered.remove(Key::FloatOrdered(OrderedFloat(*f)), idx);
             }
             RustCastValue::Str(_) => return,
-            RustCastValue::Ind(_) => return,
+            RustCastValue::Ind(indexable) => {
+                Python::with_gil(| py | {
+
+                    let mut path = HybridSet::new();
+                    if let Some(parent) = self.parent.upgrade() {
+                        path = parent.get_parents_from_stored_item(idx as usize);
+                    }
+
+                    let to_insert = indexable.borrow(py);
+                    if path.contains(to_insert.id){
+                        return;
+                    }
+
+                    self.nested.remove(to_insert.deref());
+                });
+            },
             RustCastValue::Unknown => return,
         };
-        self.num_ordered.remove(key, idx);
     }
 
     pub fn remove(&mut self, filter_bm: &HybridSet){
@@ -142,14 +162,8 @@ impl QueryMap {
         }
     }
 
-    pub fn get_parents(&self, child_bm: &Bitmap) -> Bitmap {
-        let mut parent_bm = HybridSet::new();
-        for idx in child_bm.iter() {
-            if let Some(parents) = self.parent.get(&idx) {
-                parent_bm.or_inplace(&parents);
-            }
-        }
-        parent_bm.as_bitmap()
+    pub fn get_allowed_parents(&self, child_bm: &Bitmap) -> HybridSet {
+        self.nested.get_direct_parents(child_bm)
     }
 
 }
@@ -293,7 +307,7 @@ impl QueryMap {
 
     pub fn eq(&self, val: &PyValue) -> Bitmap {
         if let Some(res) = self.exact.get(val){
-            res.as_bitmap()
+            res.clone().as_bitmap()
         } else {
             Bitmap::new()
         }
@@ -322,7 +336,6 @@ pub fn filter_index_by_hashes(
 ) -> Bitmap {
     let mut sets_iter: Bitmap = Bitmap::new();
     let mut first = true;
-    let eq = Box::new(QueryMap::new());
 
     let mut sorted_query: Vec<_> = query.iter().collect();
     sorted_query.sort_by_key(|(attr, hashes)| {
@@ -340,11 +353,15 @@ pub fn filter_index_by_hashes(
     for (attr, allowed_hashes) in sorted_query {
         per_attr_match.clear();
 
-        let attr_map = index.get(attr).unwrap_or(&eq);
+
+        if let None = index.get(attr) {
+            return Bitmap::new();
+        } 
+        let attr_map = &index[attr];
         
         for h in allowed_hashes {
             if let Some(matched) = attr_map.get(h) {
-                per_attr_match |= matched.as_bitmap();
+                per_attr_match |= matched.clone().as_bitmap();
             }
         }
 
@@ -488,7 +505,7 @@ pub fn evaluate_nested_query(
 ) -> Bitmap {
     let wrapper = PyQueryExpr{inner: expr.clone()};
     let reduced = nested_map.nested.reduced_query(wrapper);
-    nested_map.get_parents(&reduced.allowed_items)
+    nested_map.get_allowed_parents(&reduced.allowed_items).as_bitmap()
 }
 
 pub fn evaluate_query(
@@ -528,7 +545,7 @@ pub fn evaluate_query(
                 } else {
                     for v in values {
                         if let Some(bm) = qm.get(v) {
-                            result.or_inplace(&bm.as_bitmap());
+                            result.or_inplace(&bm.clone().as_bitmap());
                             result.and_inplace(all_valid);
                         }
                     }

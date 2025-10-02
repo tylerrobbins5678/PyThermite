@@ -1,17 +1,50 @@
 use pyo3::{types::PyAnyMethods, Bound, IntoPyObject, Py, PyAny, PyRef, PyRefMut, Python};
-use std::{hash::{Hash, Hasher}, sync::Arc};
+use std::{hash::{Hash, Hasher}, sync::{Arc, Weak}};
 
-use crate::index::Indexable;
+use crate::index::{self, HybridSet, IndexAPI, Indexable};
+
+#[derive(Clone, Debug)]
+pub struct StoredItemParent {
+    pub id: u32,
+    pub path_to_root: HybridSet,
+    pub index: Weak<IndexAPI>,
+}
 
 #[derive(Clone, Debug)]
 pub struct StoredItem{
     py_item: Arc<Py<Indexable>>,
+    parent: Option<StoredItemParent>, // parent index id
 }
 
 impl<'py> StoredItem {
-    pub fn new(py_item: Arc<Py<Indexable>>) -> Self {
+    pub fn new(py_item: Arc<Py<Indexable>>, parent: Option<StoredItemParent>) -> Self {
         Self {
             py_item: py_item.clone(),
+            parent: parent,
+        }
+    }
+
+    pub fn get_parent_id(&self) -> Option<u32> {
+        if let Some(parent) = &self.parent {
+            Some(parent.id)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_path_to_root(&self) -> HybridSet {
+        let mut res = HybridSet::new();
+        if let Some(parent) = &self.parent {
+            if let Some(index) = parent.index.upgrade() {
+                res.or_inplace(&index.get_ids_to_root(parent.id));
+                res.add(parent.id);
+                res
+            } else {
+                panic!("bad index upgrade");
+                res
+            }
+        } else {
+            res
         }
     }
 
@@ -21,10 +54,6 @@ impl<'py> StoredItem {
 
     pub fn borrow_py_ref(&self, py: Python<'py>) -> PyRef<'py, Indexable> {
         self.py_item.bind(py).borrow()
-    }
-
-    pub fn borrow_py_ref_mut(&self, py: Python<'py>) -> PyRefMut<'py, Indexable> {
-        self.py_item.bind(py).borrow_mut()
     }
 }
 

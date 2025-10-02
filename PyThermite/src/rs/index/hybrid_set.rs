@@ -5,15 +5,15 @@ use croaring::bitmap::BitmapIterator;
 
 const SMALL_LIMIT: usize = 4;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum HybridSet {
     Empty,
     Small(Small),  // stack
     Large(Bitmap), // heap
 }
 
-#[derive(Clone)]
-struct Small {
+#[derive(Clone, Debug)]
+pub struct Small {
     len: usize,
     data: [u32; SMALL_LIMIT] 
 }
@@ -64,11 +64,11 @@ impl HybridSet {
         HybridSet::Small(Small::new())
     }
 
-    pub fn as_bitmap(&self) -> Bitmap {
+    pub fn as_bitmap(self) -> Bitmap {
         match self {
             HybridSet::Empty => Bitmap::new(),
             HybridSet::Small(small) => Bitmap::of(small.as_slice()),
-            HybridSet::Large(bitmap) => bitmap.clone(),
+            HybridSet::Large(bitmap) => bitmap,
         }
     }
 
@@ -131,8 +131,8 @@ impl HybridSet {
                     }
             (HybridSet::Empty, HybridSet::Small(small)) => other.clone(),
             (HybridSet::Empty, HybridSet::Large(bitmap)) => other.clone(),
-            (HybridSet::Small(small), HybridSet::Empty) => self.clone(),
-            (HybridSet::Large(bitmap), HybridSet::Empty) => self.clone(),
+            (HybridSet::Small(small), HybridSet::Empty) => HybridSet::Small(small),
+            (HybridSet::Large(bitmap), HybridSet::Empty) => HybridSet::Large(bitmap),
             (HybridSet::Empty, HybridSet::Empty) => HybridSet::Empty,
         };
 
@@ -158,7 +158,7 @@ impl HybridSet {
                 bitmap.and_inplace(&bitmap_other);
                 HybridSet::Large(bitmap)
             }
-            _ => unimplemented!(),
+            _ => HybridSet::Small(Small::new()),
         };
 
         *self = replacement;
@@ -184,17 +184,17 @@ impl HybridSet {
         }
     }
 
-    fn contains(&self, val: u32) -> bool {
+    pub fn contains(&self, val: u32) -> bool {
         match self {
             HybridSet::Small(sm) => sm.data[..sm.len].contains(&val),
             HybridSet::Large(bmp) => bmp.contains(val),
-            HybridSet::Empty => unimplemented!()
+            HybridSet::Empty => false
         }
     }
 
     pub fn iter(&self) -> HybridSetIter<'_> {
         match self {
-            HybridSet::Empty => HybridSetIter::Small([].iter()), // or panic/unimplemented as you have
+            HybridSet::Empty => HybridSetIter::Small([].iter()),
             HybridSet::Small(small) => HybridSetIter::Small(small.as_slice().iter()),
             HybridSet::Large(bitmap) => HybridSetIter::Large(bitmap.iter()),
         }

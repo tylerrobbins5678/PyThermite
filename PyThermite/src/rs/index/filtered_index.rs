@@ -60,10 +60,10 @@ impl FilteredIndex{
         let index_api = IndexAPI {
             index: Arc::new(RwLock::new(FxHashMap::default())),
             items: Arc::new(RwLock::new(Vec::with_capacity(max_size as usize))),
-            allowed_items: Arc::new(RwLock::new(self.allowed_items.clone()))
+            allowed_items: Arc::new(RwLock::new(self.allowed_items.clone())),
+            parent_index: None,
         };
 
-        
         let mut new_index = index_api.index.write().unwrap();
         let mut new_items = index_api.items.write().unwrap();
         
@@ -74,15 +74,15 @@ impl FilteredIndex{
         for idx in self.allowed_items.iter() {
             let item = items[idx as usize].as_ref().unwrap();
 
-            let mut py_item = item.borrow_py_ref_mut(py);
+            let py_item = item.borrow_py_ref(py);
             py_item.add_index(res_index_arc.clone());
 
             new_items[idx as usize] = Some(item.clone());
             
-            for (attr, val) in py_item.py_values.iter() {
+            for (attr, val) in py_item.get_py_values().iter() {
                 new_index
                     .entry(SmolStr::new(attr))
-                    .or_insert_with(|| Box::new(QueryMap::new()))
+                    .or_insert_with(|| Box::new(QueryMap::new(res_index_arc.clone())))
                     .insert(val, idx);
             }
         }
