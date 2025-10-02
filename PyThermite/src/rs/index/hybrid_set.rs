@@ -5,14 +5,14 @@ use croaring::bitmap::BitmapIterator;
 
 const SMALL_LIMIT: usize = 4;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum HybridSet {
     Empty,
     Small(Small),  // stack
     Large(Bitmap), // heap
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Small {
     len: usize,
     data: [u32; SMALL_LIMIT] 
@@ -64,11 +64,11 @@ impl HybridSet {
         HybridSet::Small(Small::new())
     }
 
-    pub fn as_bitmap(&self) -> Bitmap {
+    pub fn as_bitmap(self) -> Bitmap {
         match self {
             HybridSet::Empty => Bitmap::new(),
             HybridSet::Small(small) => Bitmap::of(small.as_slice()),
-            HybridSet::Large(bitmap) => bitmap.clone(),
+            HybridSet::Large(bitmap) => bitmap,
         }
     }
 
@@ -184,7 +184,7 @@ impl HybridSet {
         }
     }
 
-    fn contains(&self, val: u32) -> bool {
+    pub fn contains(&self, val: u32) -> bool {
         match self {
             HybridSet::Small(sm) => sm.data[..sm.len].contains(&val),
             HybridSet::Large(bmp) => bmp.contains(val),

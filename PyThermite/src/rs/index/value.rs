@@ -9,31 +9,6 @@ use std::{hash::{Hash, Hasher}};
 use crate::index::stored_item::StoredItem;
 use crate::index::{types, Indexable};
 
-struct IndexableBuilder {
-    attributes: FxHashMap<SmolStr, PyValue>,
-    stored_item: StoredItem,
-    id: u32,
-    indexable: Py<Indexable>,
-}
-
-impl IndexableBuilder {
-    pub fn new(indexable: Py<Indexable>, py: Python) -> Self {
-        let index = indexable.borrow(py);
-        let id = index.id;
-        let attributes = index.py_values.clone();
-
-        drop(index);
-
-        let stored_item = StoredItem::new(Arc::new(indexable.clone_ref(py)));
-        Self {
-            attributes,
-            stored_item,
-            id,
-            indexable,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub enum RustCastValue {
     Int(i64),

@@ -10,18 +10,20 @@ use once_cell::sync::Lazy;
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::MutexGuard;
+use std::sync::RwLock;
+use std::sync::RwLockReadGuard;
 use std::sync::{Arc, Mutex, Weak};
 use std::hash::{Hash, Hasher};
 use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyDict, PyList, PyString, PyTuple}, Bound, IntoPyObject, Py, PyAny, PyObject, PyResult, Python};
 
 use smol_str::SmolStr;
 
-use crate::index::py_dict_values::UnsafePyValues;
 use crate::index::value::PyValue;
 use crate::index::{stored_item::StoredItem, IndexAPI};
 
 static GLOBAL_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-static DEFAULT_INDEX_ARC: Lazy<Arc<IndexAPI>> = Lazy::new(|| Arc::new(IndexAPI::new()));
+static DEFAULT_INDEX_ARC: Lazy<Arc<IndexAPI>> = Lazy::new(|| Arc::new(IndexAPI::new(None)));
 
 struct IndexMeta{
     index: Weak<IndexAPI>,
@@ -30,8 +32,8 @@ struct IndexMeta{
 #[pyclass(subclass, freelist = 512)]
 
 pub struct Indexable{
-    meta: SmallVec<[IndexMeta; 4]>,
-    pub py_values: FxHashMap<SmolStr, PyValue>,
+    meta: Mutex<SmallVec<[IndexMeta; 4]>>,
+    pub py_values: RwLock<FxHashMap<SmolStr, PyValue>>,
     pub id: u32
 }
 
@@ -62,34 +64,33 @@ impl Indexable{
         }
 
         Self {
-            meta: SmallVec::new(),
+            meta: Mutex::new(SmallVec::new()),
             id: GLOBAL_ID_COUNTER.fetch_add(1, Ordering::SeqCst) as u32,
-            py_values
+            py_values: RwLock::new(py_values)
         }
     }
 
     #[inline(always)]
-    fn __setattr__<'py>(&mut self, py: Python, name: &str, value: Bound<'py, PyAny>) -> PyResult<()> {
+    fn __setattr__<'py>(&self, py: Python, name: &str, value: Bound<'py, PyAny>) -> PyResult<()> {
 
         let val: PyValue = PyValue::new(value);
 
         py.allow_threads(||{
-            for ind in self.meta.iter() {
+            for ind in self.meta.lock().unwrap().iter() {
                 if let Some(full_index) = ind.index.upgrade() {
-                    let guard = full_index.index.write().unwrap();
+                    let guard = full_index.get_index_writer();
 
-                    if let Some(old_val) = self.py_values.get(name){
-                        full_index.update_index(guard, SmolStr::new(name), Some(old_val), &val, self.id);
+                    if let Some(old_val) = self.get_py_values().get(name){
+                        full_index.update_index(guard, ind.index.clone(), SmolStr::new(name), Some(old_val), &val, self.id);
                     } else {
-                        full_index.update_index(guard, SmolStr::new(name), None, &val, self.id);
+                        full_index.update_index(guard, ind.index.clone(), SmolStr::new(name), None, &val, self.id);
                     }
                 }
             }
         });
 
         // update value
-        self.py_values.insert(SmolStr::new(name), val);
-
+        self.py_values.write().unwrap().insert(SmolStr::new(name), val);
         Ok(())
     }
 
@@ -101,14 +102,14 @@ impl Indexable{
         let rust_self = self_.borrow();
         
         let arcs: SmallVec<[Arc<IndexAPI>; 4]> = rust_self.meta
-            .iter()
+            .lock().unwrap().iter()
             .filter_map(|ind| ind.index.upgrade())
             .collect();
 
         let mut index_read_locks: SmallVec<[std::sync::RwLockReadGuard<'_, std::collections::HashMap<SmolStr, Box<super::query::QueryMap>, rustc_hash::FxBuildHasher>>; 4]> = SmallVec::new();
         
         for ind in arcs.iter() {
-            let guard = ind.index.read().unwrap();
+            let guard = ind.get_index_reader();
             index_read_locks.push(guard);
         }
 
@@ -116,8 +117,8 @@ impl Indexable{
             Ok(s) => s,
             Err(_) => return Err(PyAttributeError::new_err("Invalid attribute name")),
         };
-        
-        if let Some(value) = rust_self.py_values.get(name_str) {
+        let py_values = rust_self.get_py_values();
+        if let Some(value) = py_values.get(name_str) {
             Ok(value.get_obj().clone_ref(py))
         } else {
 
@@ -133,7 +134,7 @@ impl Indexable{
     fn __dir__(py_ref: PyRef<Self>, py: Python<'_>) -> PyResult<Py<PyList>> {
         let mut names: Vec<PyObject> = vec![];
         {
-            for key in py_ref.py_values.keys() {
+            for key in py_ref.get_py_values().keys() {
                 names.push(PyString::new(py, key).into_py_any(py).unwrap());
             }
         }
@@ -153,14 +154,14 @@ impl Indexable{
     }
 
     fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("<Indexable with {} attributes>", self.py_values.len()))
+        Ok(format!("<Indexable with {} attributes>", self.get_py_values().len()))
     }
 }
 
 impl Indexable {
 
-    pub fn trim_indexes(&mut self, remove: Arc<IndexAPI>){
-        self.meta.retain(|m| {
+    pub fn trim_indexes(meta_lock: &mut MutexGuard<'_, SmallVec<[IndexMeta; 4]>>, remove: Arc<IndexAPI>){
+        meta_lock.retain(|m| {
             // Try to upgrade the Weak
             if let Some(arc) = m.index.upgrade() {
                 if Arc::ptr_eq(&arc, &remove) {
@@ -173,17 +174,23 @@ impl Indexable {
             }
         });
     }
-    pub fn add_index(&mut self, index: Weak<IndexAPI>) {
-        self.meta.push(IndexMeta {
+    pub fn add_index(&self, index: Weak<IndexAPI>) {
+        let mut meta_lock: MutexGuard<'_, SmallVec<[IndexMeta; 4]>> = self.meta.lock().unwrap();
+        meta_lock.push(IndexMeta {
             index: index,
         });
 
-        self.trim_indexes(DEFAULT_INDEX_ARC.clone());
-        self.meta.sort_by_key(|ind| Arc::as_ptr(&ind.index.upgrade().unwrap_or_else( || DEFAULT_INDEX_ARC.clone())) as usize);
+        Self::trim_indexes(&mut meta_lock, DEFAULT_INDEX_ARC.clone());
+        meta_lock.sort_by_key(|ind| Arc::as_ptr(&ind.index.upgrade().unwrap_or_else( || DEFAULT_INDEX_ARC.clone())) as usize);
     }
 
-    pub fn remove_index(&mut self, index: Arc<IndexAPI>) {
-        self.trim_indexes(index);
+    pub fn remove_index(&self, index: Arc<IndexAPI>) {
+        let mut meta_lock: MutexGuard<'_, SmallVec<[IndexMeta; 4]>> = self.meta.lock().unwrap();
+        Self::trim_indexes(&mut meta_lock, index);
+    }
+
+    pub fn get_py_values(&self) -> RwLockReadGuard<FxHashMap<SmolStr, PyValue>>{
+        self.py_values.try_read().expect("Lock contested single threaded")
     }
 }
 
