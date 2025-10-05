@@ -626,12 +626,7 @@ pub fn evaluate_query(
         }
         QueryExpr::And(exprs) => {
             // Evaluate all queries in parallel
-            let mut bitmaps: Vec<Bitmap> = exprs
-                .par_iter()
-                .map(|expr| evaluate_query(index, &all_valid, expr))
-                .collect();
-
-            // Intersect smallest sets first (optional optimization)
+            let mut bitmaps: Vec<Bitmap> = evaluate_queries_vec(index, all_valid, exprs);
             bitmaps.sort_by_key(|bm| bm.cardinality());
 
             // Reduce using AND in parallel
@@ -646,25 +641,37 @@ pub fn evaluate_query(
             result
         }
         QueryExpr::Or(exprs) => {
-            // Evaluate all queries in parallel
-            let bitmaps: Vec<Bitmap> = exprs
-                .par_iter()
-                .map(|expr| evaluate_query(index, &all_valid, expr))
-                .collect();
-
-            // Reduce using OR in parallel
-            let result = bitmaps
+            evaluate_queries_vec(index, all_valid, exprs)
                 .into_par_iter()
                 .reduce_with(|mut a, b| {
                     a.or_inplace(&b); // mutate `a` in-place
                     a
                 })
-                .unwrap_or_else(Bitmap::new); // handle empty exprs
-
-            result
+                .unwrap_or_else(Bitmap::new) // handle empty exprs
         }
         _ => Bitmap::new(), // Ne/Ge/Le unimplemented in this stub
     }
+}
+
+pub fn evaluate_queries_vec(
+    index: &FxHashMap<SmolStr, Box<QueryMap>>,
+    all_valid: &Bitmap,
+    exprs: &Vec<QueryExpr>,
+) -> Vec<Bitmap> {
+    #[cfg(not(all(target_pointer_width = "32", windows)))]
+    let bitmaps: Vec<Bitmap> = exprs
+        .par_iter()
+        .map(|expr| evaluate_query(index, &all_valid, expr))
+        .collect();
+
+    // disable for 32 bit
+    #[cfg(all(target_pointer_width = "32", windows))]
+    let bitmaps: Vec<Bitmap> = exprs
+        .iter()
+        .map(|expr| evaluate_query(index, &all_valid, expr))
+        .collect();
+
+    bitmaps
 }
 
 pub fn kwargs_to_hash_query<'py>(
