@@ -32,7 +32,7 @@ It allows you to index arbitrary Python objects, filter them by attributes and n
 
 ## Basic Usage
 
-<pre> ```
+```py
 from PyThermite import Index, Indexable, QueryExpr as Q
 
 class Person(Indexable):
@@ -89,7 +89,7 @@ employees = person_index.reduced_query(
 ).collect()
 assert len(employees) == 2
 assert {e.name for e in employees} == {"Alice", "Bob"}
-``` </pre>
+```
 
 ## Installation
 
