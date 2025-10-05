@@ -1,5 +1,5 @@
 use once_cell::sync::OnceCell;
-use pyo3::{types::PyType, Bound, Py, Python};
+use pyo3::{types::PyType, Py, Python};
 
 use crate::index::Indexable;
 

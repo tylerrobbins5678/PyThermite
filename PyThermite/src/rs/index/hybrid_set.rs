@@ -51,7 +51,7 @@ impl Small{
         }
     }
 
-    pub fn or_inplace_large(mut self, other: &Bitmap) -> HybridSet {
+    pub fn or_inplace_large(self, other: &Bitmap) -> HybridSet {
         // Promote `small` to large bitmap, then OR
         let mut new_bmp = Bitmap::of(self.as_slice());
         new_bmp.or_inplace(other);
@@ -129,8 +129,8 @@ impl HybridSet {
                         bitmap.or_inplace(bitmap_other);
                         HybridSet::Large(bitmap)
                     }
-            (HybridSet::Empty, HybridSet::Small(small)) => other.clone(),
-            (HybridSet::Empty, HybridSet::Large(bitmap)) => other.clone(),
+            (HybridSet::Empty, HybridSet::Small(_)) => other.clone(),
+            (HybridSet::Empty, HybridSet::Large(_)) => other.clone(),
             (HybridSet::Small(small), HybridSet::Empty) => HybridSet::Small(small),
             (HybridSet::Large(bitmap), HybridSet::Empty) => HybridSet::Large(bitmap),
             (HybridSet::Empty, HybridSet::Empty) => HybridSet::Empty,

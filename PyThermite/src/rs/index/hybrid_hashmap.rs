@@ -1,6 +1,5 @@
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use smol_str::SmolStr;
 use std::{borrow::Borrow, hash::Hash};
 
 #[derive(Clone, Debug)]

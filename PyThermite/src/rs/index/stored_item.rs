@@ -1,7 +1,7 @@
-use pyo3::{types::PyAnyMethods, Bound, IntoPyObject, Py, PyAny, PyRef, PyRefMut, Python};
+use pyo3::{Bound, IntoPyObject, Py, PyAny, PyRef, Python};
 use std::{hash::{Hash, Hasher}, sync::{Arc, Weak}};
 
-use crate::index::{self, HybridSet, IndexAPI, Indexable};
+use crate::index::{HybridSet, IndexAPI, Indexable};
 
 #[derive(Clone, Debug)]
 pub struct StoredItemParent {
@@ -41,7 +41,6 @@ impl<'py> StoredItem {
                 res
             } else {
                 panic!("bad index upgrade");
-                res
             }
         } else {
             res

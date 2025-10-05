@@ -1,11 +1,9 @@
-use ahash::HashMapExt;
 use arc_swap::Guard;
 use pyo3::exceptions::PyAttributeError;
 use pyo3::types::PyDictMethods;
 use pyo3::types::PyStringMethods;
 use pyo3::{ffi, IntoPyObjectExt, PyErr, PyRef};
 
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use once_cell::sync::Lazy;
 use arc_swap::ArcSwap;
@@ -13,17 +11,15 @@ use arc_swap::ArcSwap;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::MutexGuard;
-use std::sync::RwLock;
-use std::sync::RwLockReadGuard;
 use std::sync::{Arc, Mutex, Weak};
 use std::hash::{Hash, Hasher};
-use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyDict, PyList, PyString, PyTuple}, Bound, IntoPyObject, Py, PyAny, PyObject, PyResult, Python};
+use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyDict, PyList, PyString}, Bound, Py, PyAny, PyObject, PyResult, Python};
 
 use smol_str::SmolStr;
 
 use crate::index::value::PyValue;
 use crate::index::HybridHashmap;
-use crate::index::{stored_item::StoredItem, IndexAPI};
+use crate::index::IndexAPI;
 
 static GLOBAL_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static DEFAULT_INDEX_ARC: Lazy<Arc<IndexAPI>> = Lazy::new(|| Arc::new(IndexAPI::new(None)));
@@ -150,7 +146,7 @@ impl Indexable{
 
 impl Indexable {
 
-    pub fn trim_indexes(meta_lock: &mut MutexGuard<'_, SmallVec<[IndexMeta; 4]>>, remove: Arc<IndexAPI>){
+    fn trim_indexes(meta_lock: &mut MutexGuard<'_, SmallVec<[IndexMeta; 4]>>, remove: Arc<IndexAPI>){
         meta_lock.retain(|m| {
             // Try to upgrade the Weak
             if let Some(arc) = m.index.upgrade() {

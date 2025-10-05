@@ -3,7 +3,7 @@ pub mod index;
 pub use index::{IndexAPI, Index};
 pub use indexable::Indexable;
 pub use query::PyQueryExpr;
-pub use ranged_b_tree::{Key, CompositeKey128, BitMapBTree};
+pub use ranged_b_tree::{Key, BitMapBTree};
 pub use hybrid_set::HybridSet;
 pub use hybrid_hashmap::HybridHashmap;
 pub use filtered_index::FilteredIndex;
