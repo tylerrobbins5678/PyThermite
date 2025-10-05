@@ -658,20 +658,10 @@ pub fn evaluate_queries_vec(
     all_valid: &Bitmap,
     exprs: &Vec<QueryExpr>,
 ) -> Vec<Bitmap> {
-    #[cfg(not(all(target_pointer_width = "32", windows)))]
-    let bitmaps: Vec<Bitmap> = exprs
+    exprs
         .par_iter()
         .map(|expr| evaluate_query(index, &all_valid, expr))
-        .collect();
-
-    // disable for 32 bit
-    #[cfg(all(target_pointer_width = "32", windows))]
-    let bitmaps: Vec<Bitmap> = exprs
-        .iter()
-        .map(|expr| evaluate_query(index, &all_valid, expr))
-        .collect();
-
-    bitmaps
+        .collect()
 }
 
 pub fn kwargs_to_hash_query<'py>(
