@@ -318,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "pythermite"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ahash",
  "arc-swap",
