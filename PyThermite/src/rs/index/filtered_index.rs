@@ -45,7 +45,7 @@ impl FilteredIndex{
         let index = self.index.read().unwrap();
         let allowed = &self.allowed_items;
         self.filter_from_bitmap(
-            evaluate_query(&index, &allowed, &query.inner).clone()
+            evaluate_query(&index, &allowed, &query.inner)
         )
     }
 

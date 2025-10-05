@@ -1,6 +1,7 @@
 use std::{cell::UnsafeCell, collections::{hash_map::{Iter, ValuesMut}, BTreeMap, HashSet}, ops::{Bound, Deref, Range}, sync::{Arc, Weak}};
 
 use rand::seq::index;
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use croaring::Bitmap;
 use ordered_float::OrderedFloat;
@@ -624,22 +625,42 @@ pub fn evaluate_query(
                 all_valid - &inner_bm
         }
         QueryExpr::And(exprs) => {
-            let mut result = all_valid.clone();
+            // Evaluate all queries in parallel
+            let mut bitmaps: Vec<Bitmap> = exprs
+                .par_iter()
+                .map(|expr| evaluate_query(index, &all_valid, expr))
+                .collect();
 
-            for expr in exprs {
-                let bm = evaluate_query(index, &result, expr);
-                result.and_inplace(&bm);
-                if result.is_empty() {
-                    break; // early termination
-                }
-            }
+            // Intersect smallest sets first (optional optimization)
+            bitmaps.sort_by_key(|bm| bm.cardinality());
+
+            // Reduce using AND in parallel
+            let result = bitmaps
+                .into_par_iter()
+                .reduce_with(|mut a, b| {
+                    a.and_inplace(&b); // mutate `a` in-place
+                    a
+                })
+                .unwrap_or_else(Bitmap::new); // handle empty exprs
+
             result
         }
         QueryExpr::Or(exprs) => {
-            let mut result = Bitmap::new();
-            for e in exprs {
-                result.or_inplace(&evaluate_query(index, all_valid, e));
-            }
+            // Evaluate all queries in parallel
+            let bitmaps: Vec<Bitmap> = exprs
+                .par_iter()
+                .map(|expr| evaluate_query(index, &all_valid, expr))
+                .collect();
+
+            // Reduce using OR in parallel
+            let result = bitmaps
+                .into_par_iter()
+                .reduce_with(|mut a, b| {
+                    a.or_inplace(&b); // mutate `a` in-place
+                    a
+                })
+                .unwrap_or_else(Bitmap::new); // handle empty exprs
+
             result
         }
         _ => Bitmap::new(), // Ne/Ge/Le unimplemented in this stub
