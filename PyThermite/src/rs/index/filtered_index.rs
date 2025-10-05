@@ -1,11 +1,11 @@
 use std::{sync::{Arc, RwLock}};
 
 use croaring::Bitmap;
-use pyo3::{pyclass, pymethods, Bound, IntoPyObject, Py, PyAny, PyResult, Python};
+use pyo3::{pyclass, pymethods, Py, PyAny, PyResult, Python};
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 
-use crate::index::{query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, QueryMap}, stored_item::StoredItem, value::PyValue, Index, IndexAPI, Indexable, PyQueryExpr};
+use crate::index::{query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, QueryMap}, stored_item::StoredItem, Index, IndexAPI, Indexable, PyQueryExpr};
 
 
 

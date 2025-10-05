@@ -1,12 +1,8 @@
 use pyo3::{prelude::*, PyTypeInfo};
 use pyo3::types::PyAny;
-use rustc_hash::FxHashMap;
-use smol_str::SmolStr;
-use std::ops::Deref;
 use std::sync::Arc;
 use std::{hash::{Hash, Hasher}};
 
-use crate::index::stored_item::StoredItem;
 use crate::index::{types, Indexable};
 
 #[derive(Clone, Debug)]

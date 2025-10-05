@@ -1,14 +1,13 @@
-use std::{cell::UnsafeCell, collections::{hash_map::{Iter, ValuesMut}, BTreeMap, HashSet}, ops::{Bound, Deref, Range}, sync::{Arc, Weak}};
+use std::{collections:: HashSet, ops::{Bound, Deref}, sync::{Arc, Weak}};
 
-use rand::seq::index;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use croaring::Bitmap;
 use ordered_float::OrderedFloat;
-use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyString}, Py, PyAny, PyObject, PyResult, Python};
+use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyString}, PyAny, PyResult, Python};
 use smol_str::SmolStr;
 
-use crate::index::{stored_item::{StoredItem, StoredItemParent}, value::{PyValue, RustCastValue}, BitMapBTree, HybridSet, Index, IndexAPI, Key};
+use crate::index::{stored_item::{StoredItem, StoredItemParent}, value::{PyValue, RustCastValue}, BitMapBTree, HybridSet, IndexAPI, Key};
 
 #[derive(Default)]
 pub struct QueryMap {
@@ -188,11 +187,10 @@ impl QueryMap {
                     all_valid
                 )
             }
-            RustCastValue::Str(f) => {
-                let mut result = Bitmap::new();
-                result
+            RustCastValue::Str(_) => {
+                Bitmap::new()
             }
-            RustCastValue::Ind(index_api) => todo!(),
+            RustCastValue::Ind(_) => todo!(),
             RustCastValue::Unknown => {
                 Bitmap::new()
             }
@@ -216,11 +214,10 @@ impl QueryMap {
                     all_valid
                 )
             }
-            RustCastValue::Str(f) => {
-                let mut result = Bitmap::new();
-                result
+            RustCastValue::Str(_) => {
+                Bitmap::new()
             }
-            RustCastValue::Ind(index_api) => todo!(),
+            RustCastValue::Ind(_) => todo!(),
             RustCastValue::Unknown => {
                 Bitmap::new()
             }
@@ -243,11 +240,10 @@ impl QueryMap {
                     all_valid
                 )
             }
-            RustCastValue::Str(f) => {
-                let mut result = Bitmap::new();
-                result
+            RustCastValue::Str(_) => {
+                Bitmap::new()
             }
-            RustCastValue::Ind(index_api) => todo!(),
+            RustCastValue::Ind(_) => todo!(),
             RustCastValue::Unknown => {
                 Bitmap::new()
             }
@@ -271,11 +267,10 @@ impl QueryMap {
                     all_valid
                 )
             }
-            RustCastValue::Str(f) => {
-                let mut result = Bitmap::new();
-                result
+            RustCastValue::Str(_) => {
+                Bitmap::new()
             }
-            RustCastValue::Ind(index_api) => todo!(),
+            RustCastValue::Ind(_) => todo!(),
             RustCastValue::Unknown => {
                 Bitmap::new()
             }
@@ -286,16 +281,16 @@ impl QueryMap {
         let low_range = match lower {
             RustCastValue::Int(i) => Key::Int(*i),
             RustCastValue::Float(f) => Key::FloatOrdered(OrderedFloat(*f)),
-            RustCastValue::Str(s) => todo!(),
-            RustCastValue::Ind(index_api) => todo!(),
+            RustCastValue::Str(_) => todo!(),
+            RustCastValue::Ind(_) => todo!(),
             RustCastValue::Unknown => todo!(),
         };
 
         let upper_range = match upper {
             RustCastValue::Int(i) => Key::Int(*i),
             RustCastValue::Float(f) => Key::FloatOrdered(OrderedFloat(*f)),
-            RustCastValue::Str(s) => todo!(),
-            RustCastValue::Ind(index_api) => todo!(),
+            RustCastValue::Str(_) => todo!(),
+            RustCastValue::Ind(_) => todo!(),
             RustCastValue::Unknown => todo!(),
         };
 
@@ -649,7 +644,6 @@ pub fn evaluate_query(
                 })
                 .unwrap_or_else(Bitmap::new) // handle empty exprs
         }
-        _ => Bitmap::new(), // Ne/Ge/Le unimplemented in this stub
     }
 }
 

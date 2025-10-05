@@ -1,12 +1,11 @@
 
-use std::{fmt, ops::Deref, sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak}, time::Instant, vec};
+use std::{fmt, ops::Deref, sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak}, vec};
 use croaring::Bitmap;
 use pyo3::prelude::*;
-use rand::seq::IndexedRandom;
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 
-use crate::index::{filtered_index::FilteredIndex, query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, PyQueryExpr, QueryMap}, stored_item, HybridHashmap, HybridSet, Indexable};
+use crate::index::{filtered_index::FilteredIndex, query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, PyQueryExpr, QueryMap}, HybridHashmap, HybridSet, Indexable};
 
 use super::stored_item::StoredItem;
 use super::value::PyValue;
