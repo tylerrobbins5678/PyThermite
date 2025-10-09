@@ -3,13 +3,15 @@ use std::{fmt, ops::Deref, sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard
 use croaring::Bitmap;
 use pyo3::prelude::*;
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use smol_str::SmolStr;
 
-use crate::index::{filtered_index::FilteredIndex, query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, PyQueryExpr, QueryMap}, HybridHashmap, HybridSet, Indexable};
+use crate::index::{filtered_index::FilteredIndex, query::{attr_parts, evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, PyQueryExpr, QueryMap}, HybridHashmap, HybridSet, Indexable};
 
 use super::stored_item::StoredItem;
 use super::value::PyValue;
 
+const QUERY_DEPTH_LEN: usize = 12;
 
 #[pyclass]
 pub struct Index {
@@ -113,6 +115,29 @@ impl Index {
     ) -> PyResult<FilteredIndex> {
         py.allow_threads(move || {
             Ok(self.inner.reduced_query(query))
+        })
+    }
+
+    pub fn group_by(
+        &self,
+        py: Python,
+        attr: &str
+    ) -> PyResult<FxHashMap<PyValue, FilteredIndex>> {
+        py.allow_threads( move || {
+            let groups = self.inner.group_by(SmolStr::new(attr));
+            let mut res = FxHashMap::default();
+
+            match groups {
+                Some(r) => {
+                    for (py_vals, allowed) in r {
+                        res.insert(py_vals, 
+                            self.inner.filter_from_bitmap(allowed.as_bitmap())
+                        );
+                    }
+                    Ok(res)
+                },
+                None => Ok(res)
+            }
         })
     }
 
@@ -354,22 +379,16 @@ impl IndexAPI{
         union_with(&self, other)
     }
 
-//    pub fn group_by(&self, py:Python, attr: &str) -> FxHashMap<PyValue, HashSet<StoredItem>> {
-//        py.allow_threads(||{
-//            let index = self.get_index_reader();
-//            let attr_map = match index.get(attr){
-//                Some(map) => map,
-//                None => &FxHashMap::new(),
-//            };
-//            let mut result: FxHashMap<PyValue, HashSet<StoredItem>> = FxHashMap::new();
-//    
-//            for (py_val, items) in attr_map {
-//                let obj_set = (*items).iter().map(|arc| (**arc).clone()).collect();
-//                result.insert(py_val.clone(), obj_set);
-//            }
-//            result
-//        })
-//    }
+    pub fn group_by(&self, attr: SmolStr) -> Option<SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]>> {
+        let index = self.get_index_reader();
+        let (first_attr, _) = attr_parts(attr.clone());
+
+        if let Some(attr_map) = index.get(&first_attr){
+            attr_map.group_by(Some(attr))
+        } else {
+            None
+        }
+    }
 
 //    fn group_by_count(&self, py:Python, attr: &str) -> FxHashMap<PyValue, usize> {
 //        py.allow_threads(||{
