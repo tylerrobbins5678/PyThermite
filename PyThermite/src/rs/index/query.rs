@@ -5,7 +5,10 @@ use rustc_hash::FxHashMap;
 use croaring::Bitmap;
 use ordered_float::OrderedFloat;
 use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyString}, PyAny, PyResult, Python};
+use smallvec::SmallVec;
 use smol_str::SmolStr;
+
+const QUERY_DEPTH_LEN: usize = 12;
 
 use crate::index::{stored_item::{StoredItem, StoredItemParent}, value::{PyValue, RustCastValue}, BitMapBTree, HybridSet, IndexAPI, Key};
 
@@ -159,6 +162,37 @@ impl QueryMap {
     pub fn iter(&self) -> QueryMapIter<'_> {
         QueryMapIter {
             exact_iter: self.exact.iter(),
+        }
+    }
+
+    pub fn group_by(&self, sub_query: Option<SmolStr>) -> Option<SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]>> {
+        if let Some(sub_q) = sub_query {
+            let (attr, parts) = attr_parts(sub_q);
+            match parts {
+                Some(rest) => {
+                    let groups = self.nested.group_by(rest);
+                    if let Some(r) = groups {
+                        
+                        let mut res: SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]> = SmallVec::new();
+                        for (py_value, allowed) in r {
+                            let allowed_parents = self.get_allowed_parents(&allowed.as_bitmap());
+                            res.push((py_value, allowed_parents));
+                        }
+                        Some(res)
+                    } else {
+                        None
+                    }
+                },
+                None => {
+                    let mut res:SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]> = SmallVec::new();
+                    for (k, v) in &self.exact {
+                        res.push((k.clone(), v.clone()));
+                    }
+                    Some(res)
+                },
+            }
+        } else{
+            None
         }
     }
 
@@ -485,7 +519,7 @@ impl PyQueryExpr {
     }
 }
 
-fn attr_parts(attr: SmolStr) -> (SmolStr, Option<SmolStr>) {
+pub fn attr_parts(attr: SmolStr) -> (SmolStr, Option<SmolStr>) {
     if let Some(pos) = attr.find('.') {
         let (base, rest) = attr.split_at(pos);
         let rest = &rest[1..];
