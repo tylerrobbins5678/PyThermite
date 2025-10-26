@@ -185,9 +185,7 @@ impl IndexAPI{
 
         for idx in to_get.iter(){
             if let Some(item) = items_reader[idx as usize].as_ref(){
-                if let Some(parent_id) = item.get_parent_id() {
-                    result.add(parent_id as u32);
-                }
+                result.or_inplace(item.get_parent_ids());
             }
         }
 
@@ -257,6 +255,18 @@ impl IndexAPI{
                 if key.starts_with("_"){continue;}
                 _add_index(&mut index, weak_self.clone(), py_ref.id, key.clone(), value);
             }
+        }
+    }
+
+    pub fn has_object_id(&self, id: u32) -> bool {
+        self.get_items_reader().get(id as usize).is_some()
+    }
+
+    pub fn register_path(&self, object_id: u32, parent_id: u32) {
+        let mut writer = self.get_items_writer();
+        match writer.get_mut(object_id as usize).unwrap(){
+            Some(obj) => obj.add_parent(parent_id),
+            None => todo!(),
         }
     }
 

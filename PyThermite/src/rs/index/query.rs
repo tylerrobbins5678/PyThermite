@@ -75,14 +75,20 @@ impl QueryMap {
                 });
 
                 if let Some((id, py_values, weak_nested)) = res {
-                    let stored_parent = StoredItemParent {
-                        id: obj_id,
-                        path_to_root: path,
-                        index: weak_nested.clone(),
-                    };
-    
-                    let stored_item = StoredItem::new(index_obj.clone(), Some(stored_parent));
-                    self.nested.add_object(weak_nested, id, stored_item, py_values);
+                    if self.nested.has_object_id(id) {
+                        self.nested.register_path(id, obj_id);
+                    } else {
+                        let mut hs = HybridSet::new();
+                        hs.add(obj_id);
+                        let stored_parent = StoredItemParent {
+                            ids: hs,
+                            path_to_root: path,
+                            index: weak_nested.clone(),
+                        };
+        
+                        let stored_item = StoredItem::new(index_obj.clone(), Some(stored_parent));
+                        self.nested.add_object(weak_nested, id, stored_item, py_values);
+                    }
                 }
 
             },

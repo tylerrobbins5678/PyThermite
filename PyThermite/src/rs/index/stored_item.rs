@@ -5,7 +5,7 @@ use crate::index::{HybridSet, IndexAPI, Indexable};
 
 #[derive(Clone, Debug)]
 pub struct StoredItemParent {
-    pub id: u32,
+    pub ids: HybridSet,
     pub path_to_root: HybridSet,
     pub index: Weak<IndexAPI>,
 }
@@ -24,11 +24,17 @@ impl<'py> StoredItem {
         }
     }
 
-    pub fn get_parent_id(&self) -> Option<u32> {
+    pub fn add_parent(&mut self, parent_id: u32) {
+        if let Some(ref mut p) = self.parent {
+            p.ids.add(parent_id)
+        }
+    }
+
+    pub fn get_parent_ids(&self) -> &HybridSet {
         if let Some(parent) = &self.parent {
-            Some(parent.id)
+            &parent.ids
         } else {
-            None
+            &HybridSet::Empty
         }
     }
 
@@ -36,8 +42,10 @@ impl<'py> StoredItem {
         let mut res = HybridSet::new();
         if let Some(parent) = &self.parent {
             if let Some(index) = parent.index.upgrade() {
-                res.or_inplace(&index.get_ids_to_root(parent.id));
-                res.add(parent.id);
+                for id in parent.ids.iter() {
+                    res.or_inplace(&index.get_ids_to_root(id));
+                    res.add(id);
+                }
                 res
             } else {
                 panic!("bad index upgrade");
