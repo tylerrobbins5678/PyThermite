@@ -457,33 +457,33 @@ impl IndexAPI{
     }
 
     fn get_items_writer(&self) -> RwLockWriteGuard<Vec<Option<StoredItem>>> {
-        //self.items.write().unwrap()
-        self.items.try_write().expect("items writer deadlock")
+        self.items.write().unwrap()
+        //self.items.try_write().expect("items writer deadlock")
     }
 
     fn get_items_reader(&self) -> RwLockReadGuard<Vec<Option<StoredItem>>> {
-        //self.items.read().unwrap()
-        self.items.try_read().expect("cannot read from items")
+        self.items.read().unwrap()
+        //self.items.try_read().expect("cannot read from items")
     }
 
     pub fn get_index_writer(&self) -> RwLockWriteGuard<FxHashMap<SmolStr, Box<QueryMap>>> {
-        //self.index.write().unwrap()
-        self.index.try_write().expect("index writer deadlock")
+        self.index.write().unwrap()
+        //self.index.try_write().expect("index writer deadlock")
     }
 
     pub fn get_index_reader(&self) -> RwLockReadGuard<FxHashMap<SmolStr, Box<QueryMap>>> {
-        //self.index.read().unwrap()
-        self.index.try_read().expect("cannot read from index")
+        self.index.read().unwrap()
+        //self.index.try_read().expect("cannot read from index")
     }
 
     fn get_allowed_items_writer(&self) -> RwLockWriteGuard<Bitmap> {
-        //self.allowed_items.write().unwrap()
-        self.allowed_items.try_write().expect("index writer deadlock")
+        self.allowed_items.write().unwrap()
+        //self.allowed_items.try_write().expect("index writer deadlock")
     }
 
     fn get_allowed_items_reader(&self) -> RwLockReadGuard<Bitmap> {
-        //self.allowed_items.read().unwrap()
-        self.allowed_items.try_read().expect("cannot read from index")
+        self.allowed_items.read().unwrap()
+        //self.allowed_items.try_read().expect("cannot read from index")
     }
 }
 
