@@ -185,9 +185,7 @@ impl IndexAPI{
 
         for idx in to_get.iter(){
             if let Some(item) = items_reader[idx as usize].as_ref(){
-                if let Some(parent_id) = item.get_parent_id() {
-                    result.add(parent_id as u32);
-                }
+                result.or_inplace(item.get_parent_ids());
             }
         }
 
@@ -260,6 +258,18 @@ impl IndexAPI{
         }
     }
 
+    pub fn has_object_id(&self, id: u32) -> bool {
+        self.get_items_reader().get(id as usize).is_some()
+    }
+
+    pub fn register_path(&self, object_id: u32, parent_id: u32) {
+        let mut writer = self.get_items_writer();
+        match writer.get_mut(object_id as usize).unwrap(){
+            Some(obj) => obj.add_parent(parent_id),
+            None => panic!("unreachable"),
+        }
+    }
+
     pub fn add_object(
         &self,
         weak_self: Weak<IndexAPI>,
@@ -285,20 +295,25 @@ impl IndexAPI{
         }
     }
 
-    pub fn remove(&self, item: &Indexable) {
-
-        let mut index = self.get_index_writer();
+    pub fn remove(&self, item: &Indexable, parent_id: u32) {
         let item_id = item.id;
-
-        for (key, value) in (*item.get_py_values()).iter(){
-            if key.starts_with("_"){continue;}
-            _remove_index(&mut index, item_id, &key, value);
-        }
-
-        self.get_allowed_items_writer().remove(item_id);
         let mut writer = self.get_items_writer();
-        writer[item_id as usize] = None;
+        if let Some(stored_item) = writer.get_mut(item_id as usize){
+            let stored_item = stored_item.as_mut().unwrap();
+            stored_item.remove_parent(parent_id);
+            if stored_item.is_orphaned() {
+                writer[item_id as usize] = None;
 
+                let mut index = self.get_index_writer();
+
+                for (key, value) in (*item.get_py_values()).iter(){
+                    if key.starts_with("_"){continue;}
+                    _remove_index(&mut index, item_id, &key, value);
+                }
+
+                self.get_allowed_items_writer().remove(item_id);
+            }
+        }
     }
 
     pub fn reduce<'py>(

@@ -44,3 +44,30 @@ def test_nested_group_by(index: Index):
 
     all = grouped[True].collect()
     assert len(all) == 10
+
+def test_group_by_one_to_many(index: Index):
+    nested = TestClass(nest=True)
+    for i in range(10):
+        index.add_object(TestClass(id=i, nested=nested))
+
+    grouped = index.group_by("nested.nest")
+
+    all = grouped[True].collect()
+    assert len(all) == 10
+
+def test_group_by_one_to_many_deregister(index: Index):
+    nested = TestClass(nest=True)
+    for i in range(10):
+        index.add_object(TestClass(id=i, nested=nested))
+
+    grouped = index.group_by("nested.nest")
+
+    all = grouped[True].collect()
+    assert len(all) == 10
+
+    all[0].nested = "test"
+
+    grouped = index.group_by("nested.nest")
+
+    all = grouped[True].collect()
+    assert len(all) == 9
