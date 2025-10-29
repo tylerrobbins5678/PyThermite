@@ -24,6 +24,20 @@ impl<'py> StoredItem {
         }
     }
 
+    pub fn is_orphaned(&self) -> bool {
+        if let Some(ref p) = self.parent {
+            p.ids.cardinality() == 0
+        } else {
+            false
+        }
+    }
+
+    pub fn remove_parent(&mut self, parent_id: u32) {
+        if let Some(ref mut p) = self.parent {
+            p.ids.remove(parent_id)
+        }
+    }
+
     pub fn add_parent(&mut self, parent_id: u32) {
         if let Some(ref mut p) = self.parent {
             p.ids.add(parent_id)

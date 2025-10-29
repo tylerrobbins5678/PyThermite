@@ -67,7 +67,7 @@ def test_group_by_one_to_many_deregister(index: Index):
 
     all[0].nested = "test"
 
-    grouped = index.group_by("nested")
+    grouped = index.group_by("nested.nest")
 
     all = grouped[True].collect()
     assert len(all) == 9

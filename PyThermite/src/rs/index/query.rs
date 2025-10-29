@@ -141,18 +141,8 @@ impl QueryMap {
             RustCastValue::Str(_) => return,
             RustCastValue::Ind(indexable) => {
                 Python::with_gil(| py | {
-
-                    let mut path = HybridSet::new();
-                    if let Some(parent) = self.parent.upgrade() {
-                        path = parent.get_parents_from_stored_item(idx as usize);
-                    }
-
-                    let to_insert = indexable.borrow(py);
-                    if path.contains(to_insert.id){
-                        return;
-                    }
-
-                    self.nested.remove(to_insert.deref());
+                    let to_remove = indexable.borrow(py);
+                    self.nested.remove(to_remove.deref(), idx);
                 });
             },
             RustCastValue::Unknown => return,
