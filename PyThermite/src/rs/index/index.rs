@@ -536,13 +536,10 @@ fn _remove_index(
     attr: &str, 
     py_value: &PyValue
 ){
-
     if index.contains_key(attr){
         if let Some(val) = index.get_mut(attr) { 
-            if val.contains(py_value){
-                val.remove_id(py_value, idx);
-                val.check_prune(py_value);
-            }
+            val.remove_id(py_value, idx);
+            val.check_prune(py_value);
         };
 
         if index[attr].is_empty(){
