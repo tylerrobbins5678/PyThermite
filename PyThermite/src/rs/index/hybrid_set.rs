@@ -3,7 +3,7 @@ use std::mem;
 use croaring::Bitmap;
 use croaring::bitmap::BitmapIterator;
 
-const SMALL_LIMIT: usize = 4;
+const SMALL_LIMIT: usize = 8;
 
 #[derive(Clone, Debug)]
 pub enum HybridSet {

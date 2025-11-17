@@ -4,13 +4,13 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 use rustc_hash::FxHashMap;
 use croaring::Bitmap;
 use ordered_float::OrderedFloat;
-use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyString}, PyAny, PyResult, Python};
+use pyo3::{Py, PyAny, PyResult, Python, pyclass, pymethods, types::{PyAnyMethods, PyDictMethods, PyListMethods, PySetMethods, PyString, PyTupleMethods}};
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
 const QUERY_DEPTH_LEN: usize = 12;
 
-use crate::index::{stored_item::{StoredItem, StoredItemParent}, value::{PyValue, RustCastValue}, BitMapBTree, HybridSet, IndexAPI, Key};
+use crate::index::{BitMapBTree, HybridSet, IndexAPI, Indexable, Key, stored_item::{StoredItem, StoredItemParent}, value::{PyIterable, PyValue, RustCastValue}};
 
 #[derive(Default)]
 pub struct QueryMap {
@@ -33,8 +33,7 @@ impl QueryMap {
         }
     }
 
-    pub fn insert(&mut self, value: &PyValue, obj_id: u32){
-
+    fn insert_exact(&mut self, value: &PyValue, obj_id: u32){
         if let Some(existing) = self.exact.get_mut(&value) {
             existing.add(obj_id);
         } else {
@@ -42,63 +41,107 @@ impl QueryMap {
             let hybrid_set = HybridSet::of(&[obj_id]);
             self.exact.insert(value.clone(), hybrid_set);
         }
+    }
 
-        // Insert into the right ordered map based on primitive type
-        match &value.get_primitive() {
-            RustCastValue::Int(i) => {
-                self.num_ordered.insert(Key::Int(*i), obj_id);
+    fn insert_indexable(&mut self, index_obj: &Arc<Py<Indexable>>, obj_id: u32){
+        let mut path = HybridSet::new();
+
+        if let Some(parent) = self.parent.upgrade() {
+            path = parent.get_parents_from_stored_item(obj_id as usize);
+        }
+
+        let res = Python::with_gil(|py| {
+            let index_obj_ref = index_obj.try_borrow(py).expect("cannot borrow, owned by other object");
+            let id: u32 = index_obj_ref.id;
+
+            if path.contains(id){
+                return None;
             }
-            RustCastValue::Float(f) => {
-                self.num_ordered.insert(Key::FloatOrdered(OrderedFloat(*f)), obj_id);
-            }
-            RustCastValue::Ind(index_obj) => {
+            let py_values = index_obj_ref.get_py_values().clone();
 
-                let mut path = HybridSet::new();
+            // register the index in the object
+            let weak_nested = Arc::downgrade(&self.nested);
+            index_obj_ref.add_index(weak_nested.clone());
+            Some((id, py_values, weak_nested))
+        });
 
-                if let Some(parent) = self.parent.upgrade() {
-                    path = parent.get_parents_from_stored_item(obj_id as usize);
-                }
+        if let Some((id, py_values, weak_nested)) = res {
+            if self.nested.has_object_id(id) {
+                self.nested.register_path(id, obj_id);
+            } else {
+                let mut hs = HybridSet::new();
+                hs.add(obj_id);
+                let stored_parent = StoredItemParent {
+                    ids: hs,
+                    path_to_root: path,
+                    index: weak_nested.clone(),
+                };
 
-                let res = Python::with_gil(|py| {
-                    let index_obj_ref = index_obj.try_borrow(py).expect("cannot borrow, owned by other object");
-                    let id: u32 = index_obj_ref.id;
-
-                    if path.contains(id){
-                        return None;
-                    }
-                    let py_values = index_obj_ref.get_py_values().clone();
-
-                    // register the index in the object
-                    let weak_nested = Arc::downgrade(&self.nested);
-                    index_obj_ref.add_index(weak_nested.clone());
-                    Some((id, py_values, weak_nested))
-                });
-
-                if let Some((id, py_values, weak_nested)) = res {
-                    if self.nested.has_object_id(id) {
-                        self.nested.register_path(id, obj_id);
-                    } else {
-                        let mut hs = HybridSet::new();
-                        hs.add(obj_id);
-                        let stored_parent = StoredItemParent {
-                            ids: hs,
-                            path_to_root: path,
-                            index: weak_nested.clone(),
-                        };
-        
-                        let stored_item = StoredItem::new(index_obj.clone(), Some(stored_parent));
-                        self.nested.add_object(weak_nested, id, stored_item, py_values);
-                    }
-                }
-
-            },
-            RustCastValue::Unknown | RustCastValue::Str(_) => {
+                let stored_item = StoredItem::new(index_obj.clone(), Some(stored_parent));
+                self.nested.add_object(weak_nested, id, stored_item, py_values);
             }
         }
     }
 
+    fn insert_iterable(&mut self, iterable: &PyIterable, obj_id: u32){
+        Python::with_gil(|py| {
+            match iterable {
+                PyIterable::Dict(py_dict) => {
+//                    let dict = py_dict.bind(py);
+//                    dict.iter().for_each(|(k, v)| {
+//                        self.iterable.entry(k).or_insert(k)
+//                    });
+                },
+
+                PyIterable::List(py_list) => {
+                    for item in py_list.bind(py).iter(){
+                        self.insert(&PyValue::new(item), obj_id);
+                    }
+                },
+                PyIterable::Tuple(py_tuple) => {
+                    for item in py_tuple.bind(py).iter(){
+                        self.insert(&PyValue::new(item), obj_id);
+                    }
+                }
+                PyIterable::Set(py_set) => {
+                    for item in py_set.bind(py).iter(){
+                        self.insert(&PyValue::new(item), obj_id);
+                    }
+                },
+            }
+        });
+    }
+
+    pub fn insert(&mut self, value: &PyValue, obj_id: u32){
+        // Insert into the right ordered map based on primitive type
+        match &value.get_primitive() {
+            RustCastValue::Int(i) => {
+                self.insert_exact(value, obj_id);
+                self.num_ordered.insert(Key::Int(*i), obj_id);
+            }
+            RustCastValue::Float(f) => {
+                self.insert_exact(value, obj_id);
+                self.num_ordered.insert(Key::FloatOrdered(OrderedFloat(*f)), obj_id);
+            }
+            RustCastValue::Ind(index_obj) => {
+                self.insert_exact(value, obj_id);
+                self.insert_indexable(index_obj, obj_id);
+            },
+            RustCastValue::Iterable(py_iterable) => {
+                self.insert_iterable(py_iterable, obj_id);
+            }
+            
+            RustCastValue::Str(_) => {
+                self.insert_exact(value, obj_id);
+            },
+            RustCastValue::Unknown => {
+                self.insert_exact(value, obj_id);
+            },
+        }
+    }
+
     pub fn check_prune(&mut self, val: &PyValue) {
-        if self.exact[val].is_empty(){
+        if self.exact.contains_key(val) && self.exact[val].is_empty(){
             self.exact.remove(val);
         }
     }
@@ -127,25 +170,67 @@ impl QueryMap {
         self.exact.get_mut(&key)
     }
 
-    pub fn remove_id(&mut self, py_value: &PyValue, idx: u32) {
+    fn remove_exact(&mut self, py_value: &PyValue, idx: u32) {
         if let Some(hybrid_set) = self.exact.get_mut(py_value) {
             hybrid_set.remove(idx);
         }
+    }
+
+    fn remove_iterable(&mut self, iterable: &PyIterable, obj_id: u32) {
+        Python::with_gil(|py| {
+            match iterable {
+                PyIterable::Dict(py_dict) => {
+    //                let dict = py_dict.bind(py);
+    //                dict.iter().for_each(|(k, v)| {
+    //                    self.iterable.entry(k).or_insert(k)
+    //                });
+                },
+
+                PyIterable::List(py_list) => {
+                    for item in py_list.bind(py).iter(){
+                        self.remove_id(&PyValue::new(item), obj_id);
+                    }
+                },
+                PyIterable::Tuple(py_tuple) => {
+                    for item in py_tuple.bind(py).iter(){
+                        self.remove_id(&PyValue::new(item), obj_id);
+                    }
+                }
+                PyIterable::Set(py_set) => {
+                    for item in py_set.bind(py).iter(){
+                        self.remove_id(&PyValue::new(item), obj_id);
+                    }
+                },
+            }
+        })
+    }
+
+    pub fn remove_id(&mut self, py_value: &PyValue, idx: u32) {
         match &py_value.get_primitive(){
             RustCastValue::Int(i) => {
+                self.remove_exact(py_value, idx);
                 self.num_ordered.remove(Key::Int(*i), idx);
             }
             RustCastValue::Float(f) => {
+                self.remove_exact(py_value, idx);
                 self.num_ordered.remove(Key::FloatOrdered(OrderedFloat(*f)), idx);
             }
-            RustCastValue::Str(_) => return,
+            RustCastValue::Str(_) => {
+                self.remove_exact(py_value, idx);
+            },
             RustCastValue::Ind(indexable) => {
+                self.remove_exact(py_value, idx);
                 Python::with_gil(| py | {
                     let to_remove = indexable.borrow(py);
                     self.nested.remove(to_remove.deref(), idx);
                 });
             },
-            RustCastValue::Unknown => return,
+            RustCastValue::Iterable(py_iterable) => {
+                self.remove_iterable(py_iterable, idx);
+            },
+            RustCastValue::Unknown => {
+                self.remove_exact(py_value, idx);
+            },
         };
     }
 
@@ -163,7 +248,7 @@ impl QueryMap {
 
     pub fn group_by(&self, sub_query: Option<SmolStr>) -> Option<SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]>> {
         if let Some(sub_q) = sub_query {
-            let (attr, parts) = attr_parts(sub_q);
+            let (_, parts) = attr_parts(sub_q);
             match parts {
                 Some(rest) => {
                     let groups = self.nested.group_by(rest);
@@ -221,7 +306,7 @@ impl QueryMap {
                 Bitmap::new()
             }
             RustCastValue::Ind(_) => todo!(),
-            RustCastValue::Unknown => {
+            _ => {
                 Bitmap::new()
             }
         }
@@ -248,7 +333,7 @@ impl QueryMap {
                 Bitmap::new()
             }
             RustCastValue::Ind(_) => todo!(),
-            RustCastValue::Unknown => {
+            _ => {
                 Bitmap::new()
             }
         }
@@ -274,7 +359,7 @@ impl QueryMap {
                 Bitmap::new()
             }
             RustCastValue::Ind(_) => todo!(),
-            RustCastValue::Unknown => {
+            _ => {
                 Bitmap::new()
             }
         }
@@ -301,7 +386,7 @@ impl QueryMap {
                 Bitmap::new()
             }
             RustCastValue::Ind(_) => todo!(),
-            RustCastValue::Unknown => {
+            _ => {
                 Bitmap::new()
             }
         }
@@ -313,7 +398,7 @@ impl QueryMap {
             RustCastValue::Float(f) => Key::FloatOrdered(OrderedFloat(*f)),
             RustCastValue::Str(_) => todo!(),
             RustCastValue::Ind(_) => todo!(),
-            RustCastValue::Unknown => todo!(),
+            _ => todo!(),
         };
 
         let upper_range = match upper {
@@ -321,7 +406,7 @@ impl QueryMap {
             RustCastValue::Float(f) => Key::FloatOrdered(OrderedFloat(*f)),
             RustCastValue::Str(_) => todo!(),
             RustCastValue::Ind(_) => todo!(),
-            RustCastValue::Unknown => todo!(),
+            _ => todo!(),
         };
 
         self.num_ordered.range_query(
@@ -562,13 +647,14 @@ pub fn evaluate_query(
         }
         QueryExpr::In(attr, values) => {
             let (base_attr, nested_attr) = attr_parts(attr.clone());
-            let mut result = Bitmap::new();
+            let mut result;
             if let Some(qm) = index.get(&base_attr) {
-
+                
                 if let Some(nested_attr) = nested_attr {
                     let query = QueryExpr::In(nested_attr, values.clone());
                     result = evaluate_nested_query(qm, &query);
                 } else {
+                    result = Bitmap::new();
                     for v in values {
                         if let Some(bm) = qm.get(v) {
                             result.or_inplace(&bm.clone().as_bitmap());
@@ -577,6 +663,8 @@ pub fn evaluate_query(
                     }
                 }
 
+            } else {
+                result = Bitmap::new();
             }
             result
         }
@@ -656,8 +744,8 @@ pub fn evaluate_query(
 
             // Reduce using AND in parallel
             let result = bitmaps
-                .into_par_iter()
-                .reduce_with(|mut a, b| {
+                .into_iter()
+                .reduce(|mut a, b| {
                     a.and_inplace(&b); // mutate `a` in-place
                     a
                 })
@@ -667,8 +755,8 @@ pub fn evaluate_query(
         }
         QueryExpr::Or(exprs) => {
             evaluate_queries_vec(index, all_valid, exprs)
-                .into_par_iter()
-                .reduce_with(|mut a, b| {
+                .into_iter()
+                .reduce(|mut a, b| {
                     a.or_inplace(&b); // mutate `a` in-place
                     a
                 })

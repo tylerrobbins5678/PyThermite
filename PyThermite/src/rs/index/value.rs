@@ -1,15 +1,37 @@
 use pyo3::{prelude::*, PyTypeInfo};
-use pyo3::types::PyAny;
+use pyo3::types::{PyAny, PyDict, PyList, PySet, PyTuple};
 use std::sync::Arc;
 use std::{hash::{Hash, Hasher}};
 
 use crate::index::{types, Indexable};
+
+#[derive(Debug)]
+pub enum PyIterable {
+    List(Py<PyList>),
+    Dict(Py<PyDict>),
+    Tuple(Py<PyTuple>),
+    Set(Py<PySet>)
+}
+
+impl Clone for PyIterable {
+    fn clone(&self) -> Self {
+        Python::with_gil(|py| {
+            match self {
+                Self::List(arg0) => Self::List(arg0.clone_ref(py)),
+                Self::Dict(arg0) => Self::Dict(arg0.clone_ref(py)),
+                Self::Tuple(arg0) => Self::Tuple(arg0.clone_ref(py)),
+                Self::Set(arg0) => Self::Set(arg0.clone_ref(py)),
+            }
+        })
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum RustCastValue {
     Int(i64),
     Float(f64),
     Str(String),
+    Iterable(PyIterable),
     Ind(Arc<Py<Indexable>>),
     Unknown,
 }
@@ -25,15 +47,24 @@ impl PyValue {
     pub fn new<'py>(obj: Bound<'py, PyAny>) -> Self {
 
         let py_type = obj.get_type();
+        let py = obj.py();
 
-        let primitave = if py_type.is(pyo3::types::PyInt::type_object(obj.py())) {
-            RustCastValue::Int(obj.extract::<i64>().unwrap())
-        } else if py_type.is(pyo3::types::PyFloat::type_object(obj.py())) {
-            RustCastValue::Float(obj.extract::<f64>().unwrap())
-        } else if py_type.is(pyo3::types::PyString::type_object(obj.py())) {
-            RustCastValue::Str(obj.extract::<String>().unwrap())
-        } else if py_type.is_subclass(types::indexable_type().bind(obj.py())).unwrap_or(false) {
-            RustCastValue::Ind(Arc::new(obj.extract::<Py<Indexable>>().unwrap()))
+        let primitave = if py_type.is(pyo3::types::PyInt::type_object(py)) {
+            RustCastValue::Int(obj.extract::<i64>().expect("type checked"))
+        } else if py_type.is(pyo3::types::PyFloat::type_object(py)) {
+            RustCastValue::Float(obj.extract::<f64>().expect("type checked"))
+        } else if py_type.is(pyo3::types::PyString::type_object(py)) {
+            RustCastValue::Str(obj.extract::<String>().expect("type checked"))
+        } else if py_type.is_subclass(types::indexable_type().bind(py)).unwrap_or(false) {
+            RustCastValue::Ind(Arc::new(obj.extract::<Py<Indexable>>().expect("type checked")))
+        } else if py_type.is(pyo3::types::PyList::type_object(py)) {
+            RustCastValue::Iterable(PyIterable::List(obj.extract::<Py<PyList>>().expect("type checked")))
+        } else if py_type.is(pyo3::types::PyTuple::type_object(py)) {
+            RustCastValue::Iterable(PyIterable::Tuple(obj.extract::<Py<PyTuple>>().expect("type checked")))
+        } else if py_type.is(pyo3::types::PyDict::type_object(py)) {
+            RustCastValue::Iterable(PyIterable::Dict(obj.extract::<Py<PyDict>>().expect("type checked")))
+        } else if py_type.is(pyo3::types::PySet::type_object(py)) {
+            RustCastValue::Iterable(PyIterable::Set(obj.extract::<Py<PySet>>().expect("type checked")))
         } else {
             RustCastValue::Unknown
         };
@@ -48,6 +79,25 @@ impl PyValue {
             primitave,
             hash,
         }
+    }
+
+    pub fn new_iter<'py>(obj: Bound<'py, PyAny>) -> Box<dyn Iterator<Item = PyValue> + 'py> {
+        let py_type = obj.get_type();
+        let py = obj.py();
+
+        // Only iterate over native Python containers
+        let is_container = py_type.is(pyo3::types::PyList::type_object(py))
+            || py_type.is(pyo3::types::PyTuple::type_object(py))
+            || py_type.is(pyo3::types::PyDict::type_object(py))
+            || py_type.is(pyo3::types::PySet::type_object(py));
+        
+        if is_container {
+            if let Ok(iter) = obj.try_iter() {
+                return Box::new(iter.filter_map(|item| item.ok().map(PyValue::new)));
+            }
+        }
+
+        Box::new(std::iter::once(PyValue::new(obj)))
     }
 
     pub fn get_primitive(&self) -> &RustCastValue {
