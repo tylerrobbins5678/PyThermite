@@ -253,7 +253,7 @@ impl IndexAPI{
     }
 
     pub fn has_object_id(&self, id: u32) -> bool {
-        self.get_items_reader().get(id as usize).is_some()
+        self.get_items_reader().get(id as usize).unwrap_or(&None).is_some()
     }
 
     pub fn register_path(&self, object_id: u32, parent_id: u32) {
