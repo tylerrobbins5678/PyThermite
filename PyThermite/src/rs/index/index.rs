@@ -46,7 +46,7 @@ impl Index {
 
     #[pyo3(signature = (**kwargs))]
     pub fn reduce<'py>(
-        &mut self,
+        &self,
         py: Python,
         kwargs: Option<FxHashMap<String, pyo3::Bound<'py, PyAny>>>,
     ) -> PyResult<()> {
@@ -64,18 +64,12 @@ impl Index {
         Ok(self.inner.get_from_indexes(py, allowed)?)
     }
 
-    pub fn add_object_many(&mut self, py: Python, objs: Vec<Py<Indexable>>) -> PyResult<()> {
+    pub fn add_object_many(&self, py: Python, objs: Vec<PyRef<Indexable>>) -> PyResult<()> {
         
-        let weak_self = Arc::downgrade(&self.inner);
+        let weak_self: Weak<IndexAPI> = Arc::downgrade(&self.inner);
         self.inner.store_items(py, weak_self, &objs)?;
 
-        let py_handled_refs: Vec<PyRef<Indexable>> = objs.iter()
-            .map(| obj | {
-                obj.borrow(py)
-            })
-            .collect();
-
-        let raw_objs: Vec<&Indexable> = py_handled_refs.iter()
+        let raw_objs: Vec<&Indexable> = objs.iter()
             .map(| obj | {
                 obj.deref()
             })
@@ -90,7 +84,7 @@ impl Index {
 
     }
 
-    pub fn add_object(&mut self, py: Python, py_ref: PyRef<Indexable>) -> PyResult<()> {
+    pub fn add_object(&self, py: Python, py_ref: PyRef<Indexable>) -> PyResult<()> {
 
         let py_val_hashmap = py_ref.get_py_values().clone();
         let idx = py_ref.id;
@@ -141,7 +135,7 @@ impl Index {
         })
     }
 
-    pub fn union_with(&mut self, py: Python, other: &Index) -> PyResult<()>{
+    pub fn union_with(&self, py: Python, other: &Index) -> PyResult<()>{
         py.allow_threads(|| {
             self.inner.union_with(&other.inner)
         })
@@ -215,7 +209,7 @@ impl IndexAPI{
         &self,
         py: Python,
         weak_self: Weak<Self>,
-        raw_objs: &Vec<Py<Indexable>>
+        raw_objs: &Vec<PyRef<Indexable>>
     ) -> PyResult<()>{
 
         let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<Option<StoredItem>>> = self.get_items_writer();
@@ -223,16 +217,16 @@ impl IndexAPI{
         for py_ref in raw_objs{
             let idx: usize;
             {
-                let borrowed_ref = py_ref.borrow(py);
+                let borrowed_ref = py_ref;
                 idx = borrowed_ref.id as usize;
                 borrowed_ref.add_index(weak_self.clone());
             }
 
-            let py_obj_arc = Arc::new(py_ref.clone_ref(py));
+            let py_obj_arc: Arc<Py<Indexable>> = Arc::new(py_ref.into_pyobject(py)?.into());
             let stored_item = StoredItem::new(py_obj_arc.clone(), None);
             
             if items_writer.len() <= idx{
-                items_writer.resize(idx + 1, None);
+                items_writer.resize(idx * 2, None);
             }
             
             items_writer[idx] = Some(stored_item);
