@@ -236,7 +236,7 @@ def test_recursive_ownership_1(index):
 
     # And check that parent Outer.num values align with expectations
     outer_nums = [obj.num for obj in result]
-    assert outer_nums == [2, 3, 4, 5]
+    assert sorted(outer_nums) == [2, 3, 4, 5]
 
     result = index.reduced_query(Q.eq("inner.num", 20)).collect()
     assert len(result) == 1

@@ -9,7 +9,7 @@ use once_cell::sync::Lazy;
 use arc_swap::ArcSwap;
 
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::MutexGuard;
 use std::sync::{Arc, Mutex, Weak};
 use std::hash::{Hash, Hasher};
@@ -21,8 +21,30 @@ use crate::index::value::PyValue;
 use crate::index::HybridHashmap;
 use crate::index::IndexAPI;
 
-static GLOBAL_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+static GLOBAL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 static DEFAULT_INDEX_ARC: Lazy<Arc<IndexAPI>> = Lazy::new(|| Arc::new(IndexAPI::new(None)));
+
+
+static FREE_IDS: Lazy<Mutex<Vec<u32>>> = Lazy::new(|| Mutex::new(Vec::new()));
+
+
+pub fn allocate_id() -> u32 {
+    let mut free = FREE_IDS.lock().unwrap();
+
+    if let Some(id) = free.pop() {
+        // reuse a freed ID (always picks the highest free ID from the vector)
+        id
+    } else {
+        // no free IDs → allocate a new one
+        GLOBAL_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
+    }
+}
+
+pub fn free_id(id: u32) {
+    let mut free = FREE_IDS.lock().unwrap();
+    free.push(id);
+}
+
 
 struct IndexMeta{
     index: Weak<IndexAPI>,
@@ -63,7 +85,7 @@ impl Indexable{
 
         Self {
             meta: Mutex::new(SmallVec::new()),
-            id: GLOBAL_ID_COUNTER.fetch_add(1, Ordering::SeqCst) as u32,
+            id: allocate_id(),
             py_values: ArcSwap::from_pointee(py_values),
         }
     }
@@ -177,6 +199,12 @@ impl Indexable {
 
     pub fn get_py_values(&self) -> Guard<Arc<HybridHashmap<SmolStr, PyValue>>>{
         self.py_values.load()
+    }
+}
+
+impl Drop for Indexable {
+    fn drop(&mut self) {
+        free_id(self.id);
     }
 }
 
