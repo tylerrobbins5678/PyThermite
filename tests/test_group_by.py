@@ -1,6 +1,5 @@
 import pytest
 
-# Replace `yourmodule` with the actual import name of your Rust extension
 from PyThermite import Index, Indexable, QueryExpr as Q, FilteredIndex
 
 class TestClass(Indexable):

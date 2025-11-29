@@ -120,7 +120,6 @@ def test_performance(prep_data_fixture):
     mem_df = mem_usage_mb()
 
     print("Starting building index")
-    # Benchmark: Your index
     index = Index()
     start = time.perf_counter()
     index.add_object_many(py_objects)
