@@ -5,9 +5,10 @@ use pyo3::{pyclass, pymethods, Py, PyAny, PyResult, Python};
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 
-use crate::index::{query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, QueryMap}, stored_item::StoredItem, Index, IndexAPI, Indexable, PyQueryExpr};
-
-
+use crate::index::{Index, Indexable, PyQueryExpr};
+use crate::index::core::stored_item::StoredItem;
+use crate::index::core::index::IndexAPI;
+use crate::index::core::query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, QueryMap};
 
 #[pyclass]
 #[derive(Clone)]
@@ -96,25 +97,4 @@ impl FilteredIndex{
 
         Ok(res_index)
     }
-}
-
-impl FilteredIndex{
-
-    fn get_from_indexes(&self, py: Python, indexes: &Bitmap) -> PyResult<Vec<Py<Indexable>>>{
-        let items = self.items.read().unwrap();
-        let results: Vec<Py<Indexable>> = indexes.iter()
-            .map(|arc| items.get(arc as usize).unwrap().as_ref().unwrap().get_py_ref(py))
-            .collect();
-        Ok(results)
-    }
-
-    fn filter_from_bitmap(&self, mut bm: Bitmap) -> FilteredIndex {
-        bm.and_inplace(&self.allowed_items);
-        FilteredIndex {
-            index: self.index.clone(),
-            items: self.items.clone(),
-            allowed_items: bm
-        }
-    }
-
 }

@@ -5,7 +5,7 @@ edition = "2021"
 
 [lib]
 name = "PyThermite"
-path = "PyThermite/src/rs/lib.rs"
+path = "PyThermite/src/lib.rs"
 # "cdylib" is necessary to produce a shared library for Python to import from.
 crate-type = ["cdylib"]
 

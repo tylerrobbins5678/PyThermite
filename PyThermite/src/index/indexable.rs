@@ -19,11 +19,10 @@ use smol_str::SmolStr;
 
 use crate::index::value::PyValue;
 use crate::index::HybridHashmap;
-use crate::index::IndexAPI;
+use crate::index::core::index::IndexAPI;
 
 static GLOBAL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 static DEFAULT_INDEX_ARC: Lazy<Arc<IndexAPI>> = Lazy::new(|| Arc::new(IndexAPI::new(None)));
-
 
 static FREE_IDS: Lazy<Mutex<Vec<u32>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
@@ -32,10 +31,8 @@ pub fn allocate_id() -> u32 {
     let mut free = FREE_IDS.lock().unwrap();
 
     if let Some(id) = free.pop() {
-        // reuse a freed ID (always picks the highest free ID from the vector)
         id
     } else {
-        // no free IDs → allocate a new one
         GLOBAL_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
     }
 }

@@ -1,16 +1,19 @@
 use std::{collections:: HashSet, ops::{Bound, Deref}, sync::{Arc, Weak}};
 
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use croaring::Bitmap;
 use ordered_float::OrderedFloat;
-use pyo3::{Py, PyAny, PyResult, Python, pyclass, pymethods, types::{PyAnyMethods, PyDictMethods, PyListMethods, PySetMethods, PyString, PyTupleMethods}};
+use pyo3::{Py, PyAny, PyResult, Python, types::{PyAnyMethods, PyListMethods, PySetMethods, PyString, PyTupleMethods}};
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
 const QUERY_DEPTH_LEN: usize = 12;
 
-use crate::index::{BitMapBTree, HybridSet, IndexAPI, Indexable, Key, stored_item::{StoredItem, StoredItemParent}, value::{PyIterable, PyValue, RustCastValue}};
+use crate::index::{HybridSet, Indexable, interfaces::PyQueryExpr, value::{PyIterable, PyValue, RustCastValue}};
+use crate::index::core::index::IndexAPI;
+use crate::index::core::stored_item::{StoredItem, StoredItemParent};
+use crate::index::core::query::b_tree::{BitMapBTree, Key};
 
 #[derive(Default)]
 pub struct QueryMap {
@@ -505,99 +508,6 @@ pub enum QueryExpr {
     Not(Box<QueryExpr>),
     And(Vec<QueryExpr>),
     Or(Vec<QueryExpr>),
-}
-
-#[pyclass]
-#[derive(Clone)]
-pub struct PyQueryExpr {
-    pub inner: QueryExpr,
-}
-
-#[pymethods]
-impl PyQueryExpr {
-    #[staticmethod]
-    pub fn eq<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
-        Self {
-            inner: QueryExpr::Eq(SmolStr::new(attr), PyValue::new(value)),
-        }
-    }
-
-    #[staticmethod]
-    pub fn ne<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
-        Self {
-            inner: QueryExpr::Ne(SmolStr::new(attr), PyValue::new(value)),
-        }
-    }
-
-    #[staticmethod]
-    pub fn gt<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
-        Self {
-            inner: QueryExpr::Gt(SmolStr::new(attr), PyValue::new(value)),
-        }
-    }
-
-    #[staticmethod]
-    pub fn ge<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
-        Self {
-            inner: QueryExpr::Ge(SmolStr::new(attr), PyValue::new(value)),
-        }
-    }
-
-    #[staticmethod]
-    pub fn le<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
-        Self {
-            inner: QueryExpr::Le(SmolStr::new(attr), PyValue::new(value)),
-        }
-    }
-
-    #[staticmethod]
-    pub fn bt<'py>(attr: String, lower: pyo3::Bound<'py, PyAny>, upper: pyo3::Bound<'py, PyAny>) -> Self {
-        Self {
-            inner: QueryExpr::Bt(SmolStr::new(attr), PyValue::new(lower), PyValue::new(upper)),
-        }
-    }
-
-    #[staticmethod]
-    pub fn lt<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
-        Self {
-            inner: QueryExpr::Lt(SmolStr::new(attr), PyValue::new(value)),
-        }
-    }
-
-    #[staticmethod]
-    pub fn in_<'py>(attr: String, values: Vec<pyo3::Bound<'py, PyAny>>) -> Self {
-        let values = values.into_iter().map(|obj| PyValue::new(obj)).collect();
-        Self {
-            inner: QueryExpr::In(SmolStr::new(attr), values),
-        }
-    }
-
-    #[staticmethod]
-    #[pyo3(signature = (*exprs))]
-    fn and_(exprs: Vec<Self>) -> Self {
-        Self {
-            inner: QueryExpr::And(exprs.iter().map( | i | i.inner.clone()).collect()),
-        }
-    }
-
-    #[staticmethod]
-    #[pyo3(signature = (*exprs))]
-    fn or_(exprs: Vec<Self>) -> Self {
-        Self {
-            inner: QueryExpr::Or(exprs.iter().map( | i | i.inner.clone()).collect()),
-        }
-    }
-
-    #[staticmethod]
-    fn not_(exprs: Self) -> Self {
-        Self {
-            inner: QueryExpr::Not(Box::new(exprs.inner)),
-        }
-    }
-
-    fn __repr__(&self) -> String {
-        format!("<QueryExpr: {:?}>", self.inner)
-    }
 }
 
 pub fn attr_parts(attr: SmolStr) -> (SmolStr, Option<SmolStr>) {

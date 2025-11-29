@@ -1,0 +1,261 @@
+use std::ops::Bound;
+use croaring::Bitmap;
+
+use crate::index::core::query::b_tree::{Key, composite_key::CompositeKey128, nodes::{InternalNode, LeafNode}};
+
+pub const MAX_KEYS: usize = 96;
+pub const FILL_FACTOR: f64 = 0.9;
+pub const FULL_KEYS: usize = (MAX_KEYS as f64 * FILL_FACTOR) as usize;
+
+
+pub enum Positioning {
+    LowInclusive,  // Find the Low `<= key`
+    LowExclusive,  // Find the Low `< key`
+    HighInclusive,   // Find the High `>= key`
+    HighExclusive,   // Find the High `> key`
+}
+
+pub struct BitMapBTree {
+    pub root: Box<BitMapBTreeNode>,
+}
+
+impl BitMapBTree {
+    pub fn new() -> Self {
+        Self {
+            root: Box::new(BitMapBTreeNode::Leaf(LeafNode::new())),
+        }
+    }
+
+    pub fn insert(&mut self, key: Key, id: u32) {
+        if self.root.is_full() {
+            self.split_root();
+        }
+        let composite_key = CompositeKey128::new(key, id);
+        self.root.insert(composite_key);
+    }
+
+    pub fn remove(&mut self, key: Key, id: u32) -> bool {
+        self.root.remove(key, id)
+    }
+
+    fn split_root(&mut self) {
+        // Extract the current root node
+        let old_root = std::mem::replace(&mut self.root, Box::new(BitMapBTreeNode::Leaf(LeafNode::new())));
+        let base_index = MAX_KEYS / 2;
+
+        match *old_root {
+            BitMapBTreeNode::Leaf(mut leaf) => {
+                // Split the full leaf node
+                let (sep_key, right_leaf) = leaf.split();
+                let left_leaf = leaf; // Left side is the old leaf after split
+                
+                // Create a new internal node to be the new root
+                let mut new_root = InternalNode::new();
+
+                // Insert separator key
+                new_root.keys[base_index] = Some(left_leaf.least_key());
+                new_root.keys[base_index + 1] = Some(sep_key.clone());
+
+                // Insert the two children
+                new_root.children[base_index] = Some(Box::new(BitMapBTreeNode::Leaf(left_leaf)));
+                new_root.children[base_index + 1] = Some(Box::new(BitMapBTreeNode::Leaf(right_leaf)));
+
+                // Initialize children bitmaps
+                new_root.children_bitmaps[base_index] = new_root.children[base_index].as_ref().map(|child| child.get_bitmap());
+                new_root.children_bitmaps[base_index + 1] = new_root.children[base_index + 1].as_ref().map(|child| child.get_bitmap());
+
+                new_root.num_keys = 2;
+                new_root.offset = base_index;
+
+                self.root = Box::new(BitMapBTreeNode::Internal(new_root));
+            }
+
+            BitMapBTreeNode::Internal(mut internal) => {
+                // Split internal node root (similar process)
+                let (sep_key, right_internal) = internal.split();
+                let left_internal = internal;
+
+                let mut new_root = InternalNode::new();
+
+                new_root.keys[base_index] = Some(left_internal.least_key());
+                new_root.keys[base_index + 1] = Some(sep_key.clone());
+
+                new_root.children[base_index] = Some(Box::new(BitMapBTreeNode::Internal(left_internal)));
+                new_root.children[base_index + 1] = Some(Box::new(BitMapBTreeNode::Internal(right_internal)));
+
+                new_root.children_bitmaps[base_index] = new_root.children[base_index].as_ref().map(|child| child.get_bitmap());
+                new_root.children_bitmaps[base_index + 1] = new_root.children[base_index + 1].as_ref().map(|child| child.get_bitmap());
+
+                new_root.num_keys = 2;
+                new_root.offset = base_index;
+
+                self.root = Box::new(BitMapBTreeNode::Internal(new_root));
+            }
+        }
+    }
+
+    pub fn range_query(&self, lower: Bound<&Key>, upper: Bound<&Key>, allowed: &Bitmap) -> Bitmap {
+        self.root.query_range(lower, upper, allowed)
+    }
+
+    pub fn debug_print(&self) {
+        self.root.debug_print(0);
+    }
+
+    pub fn debug_print_range(
+        &self,
+        indent: usize,
+        lower: Option<&Key>,
+        upper: Option<&Key>,
+    ) {
+        self.root.debug_print_range(indent, lower, upper);
+    }
+}
+
+impl Default for BitMapBTree {
+    fn default() -> Self {
+        BitMapBTree::new()
+    }
+}
+
+#[derive(Debug)]
+pub enum BitMapBTreeNode {
+    Internal(InternalNode),
+    Leaf(LeafNode),
+}
+
+impl BitMapBTreeNode {
+    pub fn get_bitmap(&self) -> Bitmap {
+        match self {
+            BitMapBTreeNode::Leaf(leaf) => leaf.get_bitmap(),
+            BitMapBTreeNode::Internal(internal) => internal.get_bitmap(),
+        }
+    }
+
+    pub fn is_full(&self) -> bool {
+        match self {
+            BitMapBTreeNode::Leaf(leaf) => leaf.is_full(),
+            BitMapBTreeNode::Internal(internal) => internal.is_full(),
+        }
+    }
+
+
+    pub fn insert(&mut self, key: CompositeKey128) {
+        match self {
+            BitMapBTreeNode::Leaf(leaf) => leaf.insert_non_full(key),
+            BitMapBTreeNode::Internal(internal) => internal.insert(key),
+        }
+    }
+
+    pub fn remove(&mut self, key: Key, id: u32) -> bool {
+        let composite_key = CompositeKey128::new(key, id);
+        self.remove_composite_key(composite_key)
+    }
+    
+    pub fn remove_composite_key(&mut self, key: CompositeKey128) -> bool {
+        match self {
+            BitMapBTreeNode::Leaf(leaf) => leaf.remove(key),
+            BitMapBTreeNode::Internal(internal) => internal.remove(key),
+        }
+    }
+
+    pub fn query_range(&self, lower: Bound<&Key>, upper: Bound<&Key>, allowed: &Bitmap) -> Bitmap {
+        match self {
+            BitMapBTreeNode::Leaf(leaf) => {
+                leaf.query_range(lower, upper, allowed)
+            }
+
+            BitMapBTreeNode::Internal(internal) => {
+                internal.query_range(lower, upper, allowed)
+            }
+        }
+    }
+
+    pub fn debug_print_range(
+        &self,
+        indent: usize,
+        lower: Option<&Key>,
+        upper: Option<&Key>,
+    ) {
+        let pad = "  ".repeat(indent);
+
+        match self {
+            BitMapBTreeNode::Leaf(leaf) => {
+                // println!("{pad}📄 Leaf (offset: {}, keys: {}):", leaf.offset, leaf.num_keys);
+                for i in leaf.offset..leaf.offset + leaf.num_keys {
+                    if let Some(key) = &leaf.keys[i] {
+                        // Check if key is in range
+                        if (lower.is_none() || key >= lower.unwrap())
+                            && (upper.is_none() || key <= upper.unwrap())
+                        {
+                            println!("{pad}  *[{i}] = {:?}", key);
+                        }
+                    }
+                }
+            }
+
+            BitMapBTreeNode::Internal(internal) => {
+                // println!("{pad}🧭 Internal (offset: {}, keys: {}):", internal.offset, internal.num_keys);
+
+                // Print keys within range
+                for i in internal.offset..internal.offset + internal.num_keys {
+                    if let Some(key) = &internal.keys[i] {
+                        if (lower.is_none() || key >= lower.unwrap())
+                            && (upper.is_none() || key <= upper.unwrap())
+                        {
+                            println!("{pad}  *Key[{i}] = {:?}", key);
+                        }
+                    }
+                }
+
+                // Recurse only on children whose keys might overlap the range.
+                // Since this is a B-tree, child i corresponds to keys in
+                // range (keys[i-1], keys[i]] or appropriate bounds.
+
+                // For simplicity, recurse on all children but you can optimize
+                for i in 0..MAX_KEYS {
+                    if let Some(child) = &internal.children[i] {
+                        // TODO: optimize by checking child's key range if available
+                        // println!("{pad}  └── Child[{i}]:");
+                        child.debug_print_range(indent + 1, lower, upper);
+                    }
+                }
+            }
+        }
+    }    
+
+    pub fn debug_print(&self, indent: usize) {
+        let pad = "  ".repeat(indent);
+        match self {
+            BitMapBTreeNode::Leaf(leaf) => {
+                println!("{pad}📄 Leaf (offset: {}, keys: {}):", leaf.offset, leaf.num_keys);
+                for i in 0..MAX_KEYS {
+                    let mark = if i >= leaf.offset && i < leaf.offset + leaf.num_keys { "*" } else { " " };
+                    if let Some(key) = &leaf.keys[i] {
+                        println!("{pad}  {mark}[{i}] = {:?}", key);
+                    } else {
+                        println!("{pad}   [{i}] = <empty>");
+                    }
+                }
+            }
+            BitMapBTreeNode::Internal(internal) => {
+                println!("{pad}🧭 Internal (offset: {}, keys: {}):", internal.offset, internal.num_keys);
+                for i in 0..MAX_KEYS {
+                    let mark = if i >= internal.offset && i < internal.offset + internal.num_keys { "*" } else { " " };
+                    if let Some(key) = &internal.keys[i] {
+                        println!("{pad}  {mark}Key[{i}] = {:?}", key);
+                    } else {
+                        println!("{pad}   Key[{i}] = <empty>");
+                    }
+                }
+
+                for i in 0..MAX_KEYS {
+                    if let Some(child) = &internal.children[i] {
+                        println!("{pad}  └── Child[{i}]:");
+                        child.debug_print(indent + 1);
+                    }
+                }
+            }
+        }
+    }
+}
