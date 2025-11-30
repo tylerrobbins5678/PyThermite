@@ -168,6 +168,9 @@ impl HybridSet {
     pub fn add(&mut self, val: u32) {
         match self {
             HybridSet::Small(sm) => {
+                if sm.data[..sm.len].contains(&val) {
+                    return;
+                }
                 if sm.len < SMALL_LIMIT {
                     sm.data[sm.len] = val;
                     sm.len += 1;
@@ -180,7 +183,10 @@ impl HybridSet {
             HybridSet::Large(bmp) => {
                 bmp.add(val);
             }
-            HybridSet::Empty => unimplemented!()
+            HybridSet::Empty => {
+                let small = HybridSet::of(&[val]);
+                *self = small;
+            }
         }
     }
 

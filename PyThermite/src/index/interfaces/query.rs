@@ -1,7 +1,7 @@
 use pyo3::{PyAny, pyclass, pymethods};
 use smol_str::SmolStr;
 
-use crate::index::{core::query::query::QueryExpr, value::PyValue};
+use crate::index::{core::query::query_ops::QueryExpr, value::PyValue};
 
 
 #[pyclass]

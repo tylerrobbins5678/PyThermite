@@ -111,14 +111,11 @@ impl IndexAPI{
         raw_objs: Vec<&Indexable>
     ) {
 
-        let mut index = self.get_index_writer();
-        let mut allowed_writer = self.get_allowed_items_writer();
-
         for py_ref in raw_objs {
-            allowed_writer.add(py_ref.id);
+            self.get_allowed_items_writer().add(py_ref.id);
             for (key, value) in (*py_ref.get_py_values()).iter(){
                 if key.starts_with("_"){continue;}
-                _add_index(&mut index, weak_self.clone(), py_ref.id, key.clone(), value);
+                self.add_index(weak_self.clone(), py_ref.id, key.clone(), value);
             }
         }
     }
@@ -153,10 +150,9 @@ impl IndexAPI{
             items_writer[idx as usize] = Some(stored_item);
         }
 
-        let mut index= self.get_index_writer();
         for (key, value) in py_val_hashmap.iter() {
             if key.starts_with("_"){continue;}
-            _add_index(&mut index, weak_self.clone(), idx, key.clone(), value);
+            self.add_index(weak_self.clone(), idx, key.clone(), value);
         }
     }
 
@@ -168,12 +164,11 @@ impl IndexAPI{
             stored_item.remove_parent(parent_id);
             if stored_item.is_orphaned() {
                 writer[item_id as usize] = None;
-
-                let mut index = self.get_index_writer();
+                drop(writer);
 
                 for (key, value) in (*item.get_py_values()).iter(){
                     if key.starts_with("_"){continue;}
-                    _remove_index(&mut index, item_id, &key, value);
+                    self.remove_index(item_id, &key, value);
                 }
 
                 self.get_allowed_items_writer().remove(item_id);
@@ -295,7 +290,6 @@ impl IndexAPI{
 
     pub fn update_index(
         &self,
-        mut index: std::sync::RwLockWriteGuard<'_, FxHashMap<SmolStr, Box<QueryMap>>>,
         weak_self: Weak<IndexAPI>,
         attr: SmolStr, 
         old_pv: Option<&PyValue>,
@@ -307,9 +301,9 @@ impl IndexAPI{
         }
         
         if let Some(old_val) = old_pv {
-            _remove_index(&mut index, item_id, &attr, old_val);
+            self.remove_index(item_id, &attr, old_val);
         }
-        _add_index(&mut index, weak_self, item_id, attr, &new_pv);
+        self.add_index(weak_self, item_id, attr, &new_pv);
     }
 
     pub fn get_from_indexes(&self, py: Python, indexes: Bitmap) -> PyResult<Vec<Py<Indexable>>>{
@@ -319,6 +313,44 @@ impl IndexAPI{
             .collect();
 
         Ok(results)
+    }
+
+    pub fn add_index(
+        &self,
+        weak_self: Weak<IndexAPI>,
+        obj_id: u32,
+        attr: SmolStr,
+        value: &PyValue
+    ){
+        if let Some(qmap) = self.get_index_reader().get(&attr) {
+            qmap.insert(value, obj_id);
+            return;
+        }
+
+        let qmap = QueryMap::new(weak_self);
+        qmap.insert(value, obj_id);
+        self.get_index_writer().insert(attr, Box::new(qmap));
+
+    }
+
+    fn remove_index(
+        &self,
+        idx: u32,
+        attr: &str, 
+        py_value: &PyValue
+    ){
+        let index = self.get_index_reader();
+        if index.contains_key(attr){
+            if let Some(val) = index.get(attr) { 
+                val.remove_id(py_value, idx);
+                val.check_prune(py_value);
+            };
+
+            if index[attr].is_empty(){
+                drop(index);
+                self.get_index_writer().remove(attr);
+            }
+        }
     }
 
     pub fn filter_from_bitmap(&self, bm: Bitmap) -> FilteredIndex {
@@ -371,40 +403,5 @@ impl fmt::Debug for IndexAPI {
             .field("items_len", &items.len())
             .field("allowed_items_cardinality", &allowed_items.cardinality())
             .finish()
-    }
-}
-
-
-pub fn _add_index(
-    index: &mut std::sync::RwLockWriteGuard<'_, FxHashMap<SmolStr, Box<QueryMap>>>, 
-    weak_self: Weak<IndexAPI>,
-    obj_id: u32,
-    attr: SmolStr,
-    value: &PyValue
-){
-    if let Some(qmap) = index.get_mut(&attr) {
-        qmap.insert(value, obj_id);
-    } else {
-        let mut qmap = QueryMap::new(weak_self);
-        qmap.insert(value, obj_id);
-        index.insert(attr, Box::new(qmap));
-    }
-}
-
-fn _remove_index(
-    index: &mut std::sync::RwLockWriteGuard<'_, FxHashMap<SmolStr, Box<QueryMap>>>,
-    idx: u32,
-    attr: &str, 
-    py_value: &PyValue
-){
-    if index.contains_key(attr){
-        if let Some(val) = index.get_mut(attr) { 
-            val.remove_id(py_value, idx);
-            val.check_prune(py_value);
-        };
-
-        if index[attr].is_empty(){
-            index.remove(attr);
-        }
     }
 }
