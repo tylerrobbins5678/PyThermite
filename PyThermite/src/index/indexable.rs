@@ -95,12 +95,11 @@ impl Indexable{
         py.allow_threads(||{
             for ind in self.meta.lock().unwrap().iter() {
                 if let Some(full_index) = ind.index.upgrade() {
-                    let guard = full_index.get_index_writer();
 
                     if let Some(old_val) = self.get_py_values().get(name){
-                        full_index.update_index(guard, ind.index.clone(), SmolStr::new(name), Some(old_val), &val, self.id);
+                        full_index.update_index(ind.index.clone(), SmolStr::new(name), Some(old_val), &val, self.id);
                     } else {
-                        full_index.update_index(guard, ind.index.clone(), SmolStr::new(name), None, &val, self.id);
+                        full_index.update_index(ind.index.clone(), SmolStr::new(name), None, &val, self.id);
                     }
                 }
             }

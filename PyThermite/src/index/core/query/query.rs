@@ -1,26 +1,25 @@
-use std::{collections:: HashSet, ops::{Bound, Deref}, sync::{Arc, Weak}};
+use std::{ops::Deref, sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak}};
 
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use croaring::Bitmap;
 use ordered_float::OrderedFloat;
-use pyo3::{Py, PyAny, PyResult, Python, types::{PyAnyMethods, PyListMethods, PySetMethods, PyString, PyTupleMethods}};
+use pyo3::{Py, Python, types::{PyListMethods, PySetMethods, PyTupleMethods}};
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
 const QUERY_DEPTH_LEN: usize = 12;
 
-use crate::index::{HybridSet, Indexable, interfaces::PyQueryExpr, value::{PyIterable, PyValue, RustCastValue}};
+use crate::index::{HybridSet, Indexable, core::query::attr_parts, value::{PyIterable, PyValue, RustCastValue}};
 use crate::index::core::index::IndexAPI;
 use crate::index::core::stored_item::{StoredItem, StoredItemParent};
 use crate::index::core::query::b_tree::{BitMapBTree, Key};
 
 #[derive(Default)]
 pub struct QueryMap {
-    exact: FxHashMap<PyValue, HybridSet>,
-    parent: Weak<IndexAPI>,
-    num_ordered: BitMapBTree,
-    nested: Arc<IndexAPI>,
+    pub exact: RwLock<FxHashMap<PyValue, HybridSet>>,
+    pub parent: Weak<IndexAPI>,
+    pub num_ordered: RwLock<BitMapBTree>,
+    pub nested: Arc<IndexAPI>,
 }
 
 unsafe impl Send for QueryMap {}
@@ -29,24 +28,35 @@ unsafe impl Sync for QueryMap {}
 impl QueryMap {
     pub fn new(parent: Weak<IndexAPI>) -> Self{
         Self{
-            exact: FxHashMap::default(),
+            exact: RwLock::new(FxHashMap::default()),
             parent: parent.clone(),
-            num_ordered: BitMapBTree::new(),
+            num_ordered: RwLock::new(BitMapBTree::new()),
             nested: Arc::new(IndexAPI::new(Some(parent))),
         }
     }
 
-    fn insert_exact(&mut self, value: &PyValue, obj_id: u32){
-        if let Some(existing) = self.exact.get_mut(&value) {
+    fn insert_exact(&self, value: &PyValue, obj_id: u32){
+        let mut writer = self.write_exact();
+        if let Some(existing) = writer.get_mut(&value) {
             existing.add(obj_id);
         } else {
             // lazily create only if needed
             let hybrid_set = HybridSet::of(&[obj_id]);
-            self.exact.insert(value.clone(), hybrid_set);
+            writer.insert(value.clone(), hybrid_set);
         }
     }
 
-    fn insert_indexable(&mut self, index_obj: &Arc<Py<Indexable>>, obj_id: u32){
+    fn insert_num_ordered(&self, key: Key, obj_id: u32){
+        let mut writer = self.write_num_ordered();
+        writer.insert(key, obj_id);
+    }
+
+    fn remove_num_ordered(&self, key: Key, obj_id: u32){
+        let mut writer = self.write_num_ordered();
+        writer.remove(key, obj_id);
+    }
+
+    fn insert_indexable(&self, index_obj: &Arc<Py<Indexable>>, obj_id: u32){
         let mut path = HybridSet::new();
 
         if let Some(parent) = self.parent.upgrade() {
@@ -86,7 +96,7 @@ impl QueryMap {
         }
     }
 
-    fn insert_iterable(&mut self, iterable: &PyIterable, obj_id: u32){
+    fn insert_iterable(&self, iterable: &PyIterable, obj_id: u32){
         Python::with_gil(|py| {
             match iterable {
                 PyIterable::Dict(py_dict) => {
@@ -115,16 +125,16 @@ impl QueryMap {
         });
     }
 
-    pub fn insert(&mut self, value: &PyValue, obj_id: u32){
+    pub fn insert(&self, value: &PyValue, obj_id: u32){
         // Insert into the right ordered map based on primitive type
         match &value.get_primitive() {
             RustCastValue::Int(i) => {
                 self.insert_exact(value, obj_id);
-                self.num_ordered.insert(Key::Int(*i), obj_id);
+                self.insert_num_ordered(Key::Int(*i), obj_id);
             }
             RustCastValue::Float(f) => {
                 self.insert_exact(value, obj_id);
-                self.num_ordered.insert(Key::FloatOrdered(OrderedFloat(*f)), obj_id);
+                self.insert_num_ordered(Key::FloatOrdered(OrderedFloat(*f)), obj_id);
             }
             RustCastValue::Ind(index_obj) => {
                 self.insert_exact(value, obj_id);
@@ -143,43 +153,60 @@ impl QueryMap {
         }
     }
 
-    pub fn check_prune(&mut self, val: &PyValue) {
-        if self.exact.contains_key(val) && self.exact[val].is_empty(){
-            self.exact.remove(val);
+    pub fn check_prune(&self, val: &PyValue) {
+        let reader = self.read_exact();
+        if reader.contains_key(val) && reader[val].is_empty(){
+            drop(reader);
+            let mut writer = self.write_exact();
+            writer.remove(val);
         }
     }
 
-    pub fn merge(&mut self, other: &Self) {
-        for (val, bm) in self.exact.iter_mut() {
-            if let Some(other) = other.get(&val){
+    pub fn merge(&self, other: &Self) {
+        let mut writer = self.write_exact();
+        let other_reader = other.read_exact();
+        for (val, bm) in writer.iter_mut() {
+            if let Some(other) = other.get(&other_reader, &val){
                 bm.or_inplace(other);
             }
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.exact.is_empty()
+        self.read_exact().is_empty()
     }
 
     pub fn contains(&self, key: &PyValue) -> bool{
-        self.exact.contains_key(key)
+        self.read_exact().contains_key(key)
     }
 
-    pub fn get(&self, key: &PyValue) -> Option<&HybridSet>{
-        self.exact.get(&key)
+    pub fn get<'a>(
+        &self,
+        guard: &'a RwLockReadGuard<FxHashMap<PyValue, HybridSet>>,
+        key: &PyValue,
+    ) -> Option<&'a HybridSet> {
+        guard.get(key)
     }
 
-    pub fn get_mut(&mut self, key: &PyValue) -> Option<&mut HybridSet> {
-        self.exact.get_mut(&key)
+    pub fn get_mut<'a>(
+        &self,
+        guard: &'a mut RwLockWriteGuard<FxHashMap<PyValue, HybridSet>>,
+        key: &PyValue,
+    ) -> Option<&'a mut HybridSet> {
+        guard.get_mut(key)
     }
 
-    fn remove_exact(&mut self, py_value: &PyValue, idx: u32) {
-        if let Some(hybrid_set) = self.exact.get_mut(py_value) {
+    fn remove_exact(&self, py_value: &PyValue, idx: u32) {
+        let reader = self.read_exact();
+        if let Some(_) = reader.get(py_value) {
+            drop(reader);
+            let mut writer = self.write_exact();
+            let hybrid_set = writer.get_mut(py_value).unwrap();
             hybrid_set.remove(idx);
         }
     }
 
-    fn remove_iterable(&mut self, iterable: &PyIterable, obj_id: u32) {
+    fn remove_iterable(&self, iterable: &PyIterable, obj_id: u32) {
         Python::with_gil(|py| {
             match iterable {
                 PyIterable::Dict(py_dict) => {
@@ -208,15 +235,15 @@ impl QueryMap {
         })
     }
 
-    pub fn remove_id(&mut self, py_value: &PyValue, idx: u32) {
+    pub fn remove_id(&self, py_value: &PyValue, idx: u32) {
         match &py_value.get_primitive(){
             RustCastValue::Int(i) => {
                 self.remove_exact(py_value, idx);
-                self.num_ordered.remove(Key::Int(*i), idx);
+                self.remove_num_ordered(Key::Int(*i), idx);
             }
             RustCastValue::Float(f) => {
                 self.remove_exact(py_value, idx);
-                self.num_ordered.remove(Key::FloatOrdered(OrderedFloat(*f)), idx);
+                self.remove_num_ordered(Key::FloatOrdered(OrderedFloat(*f)), idx);
             }
             RustCastValue::Str(_) => {
                 self.remove_exact(py_value, idx);
@@ -237,15 +264,10 @@ impl QueryMap {
         };
     }
 
-    pub fn remove(&mut self, filter_bm: &HybridSet){
-        for (_, bm) in self.exact.iter_mut() {
+    pub fn remove(&self, filter_bm: &HybridSet){
+        let mut writer = self.write_exact();
+        for (_, bm) in writer.iter_mut() {
             bm.and_inplace(filter_bm);
-        }
-    }
-
-    pub fn iter(&self) -> QueryMapIter<'_> {
-        QueryMapIter {
-            exact_iter: self.exact.iter(),
         }
     }
 
@@ -269,7 +291,8 @@ impl QueryMap {
                 },
                 None => {
                     let mut res:SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]> = SmallVec::new();
-                    for (k, v) in &self.exact {
+                    let reader = self.read_exact();
+                    for (k, v) in reader.iter() {
                         res.push((k.clone(), v.clone()));
                     }
                     Some(res)
@@ -286,438 +309,18 @@ impl QueryMap {
 
 }
 
+
 impl QueryMap {
-
-    pub fn gt(&self, val: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
-        // strictly greater than
-        match val {
-            RustCastValue::Int(i) => {
-                self.num_ordered.range_query(
-                    Bound::Excluded(&Key::Int(*i)),
-                    Bound::Unbounded,
-                    all_valid
-                )
-            }
-            RustCastValue::Float(f) => {
-                self.num_ordered.range_query(
-                    Bound::Excluded(&Key::FloatOrdered(OrderedFloat(*f))),
-                    Bound::Unbounded,
-                    all_valid
-                )
-            }
-            RustCastValue::Str(_) => {
-                Bitmap::new()
-            }
-            RustCastValue::Ind(_) => todo!(),
-            _ => {
-                Bitmap::new()
-            }
-        }
+    pub fn read_exact(&self) -> std::sync::RwLockReadGuard<'_, FxHashMap<PyValue, HybridSet>> {
+        self.exact.read().unwrap()
     }
-
-    pub fn ge(&self, val: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
-        // strictly greater than
-        match val {
-            RustCastValue::Int(i) => {
-                self.num_ordered.range_query(
-                    Bound::Included(&Key::Int(*i)),
-                    Bound::Unbounded,
-                    all_valid
-                )
-            }
-            RustCastValue::Float(f) => {
-                self.num_ordered.range_query(
-                    Bound::Included(&Key::FloatOrdered(OrderedFloat(*f))),
-                    Bound::Unbounded,
-                    all_valid
-                )
-            }
-            RustCastValue::Str(_) => {
-                Bitmap::new()
-            }
-            RustCastValue::Ind(_) => todo!(),
-            _ => {
-                Bitmap::new()
-            }
-        }
+    pub fn write_exact(&self) -> std::sync::RwLockWriteGuard<'_, FxHashMap<PyValue, HybridSet>> {
+        self.exact.write().unwrap()
     }
-
-    pub fn lt(&self, val: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
-        match val {
-            RustCastValue::Int(i) => {
-                self.num_ordered.range_query(
-                    Bound::Unbounded,
-                    Bound::Excluded(&Key::Int(*i)),
-                    all_valid
-                )
-            }
-            RustCastValue::Float(f) => {
-                self.num_ordered.range_query(
-                    Bound::Unbounded,
-                    Bound::Excluded(&Key::FloatOrdered(OrderedFloat(*f))),
-                    all_valid
-                )
-            }
-            RustCastValue::Str(_) => {
-                Bitmap::new()
-            }
-            RustCastValue::Ind(_) => todo!(),
-            _ => {
-                Bitmap::new()
-            }
-        }
+    pub fn read_num_ordered(&self) -> std::sync::RwLockReadGuard<'_, BitMapBTree> {
+        self.num_ordered.read().unwrap()
     }
-
-    pub fn le(&self, val: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
-        // strictly greater than
-        match val {
-            RustCastValue::Int(i) => {
-                self.num_ordered.range_query(
-                    Bound::Unbounded,
-                    Bound::Included(&Key::Int(*i)),
-                    all_valid
-                )
-            }
-            RustCastValue::Float(f) => {
-                self.num_ordered.range_query(
-                    Bound::Unbounded,
-                    Bound::Included(&Key::FloatOrdered(OrderedFloat(*f))),
-                    all_valid
-                )
-            }
-            RustCastValue::Str(_) => {
-                Bitmap::new()
-            }
-            RustCastValue::Ind(_) => todo!(),
-            _ => {
-                Bitmap::new()
-            }
-        }
+    pub fn write_num_ordered(&self) -> std::sync::RwLockWriteGuard<'_, BitMapBTree> {
+        self.num_ordered.write().unwrap()
     }
-
-    pub fn bt(&self, lower: &RustCastValue, upper: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
-        let low_range = match lower {
-            RustCastValue::Int(i) => Key::Int(*i),
-            RustCastValue::Float(f) => Key::FloatOrdered(OrderedFloat(*f)),
-            RustCastValue::Str(_) => todo!(),
-            RustCastValue::Ind(_) => todo!(),
-            _ => todo!(),
-        };
-
-        let upper_range = match upper {
-            RustCastValue::Int(i) => Key::Int(*i),
-            RustCastValue::Float(f) => Key::FloatOrdered(OrderedFloat(*f)),
-            RustCastValue::Str(_) => todo!(),
-            RustCastValue::Ind(_) => todo!(),
-            _ => todo!(),
-        };
-
-        self.num_ordered.range_query(
-            Bound::Included(&low_range),
-            Bound::Included(&upper_range),
-            all_valid
-        )
-    }
-
-    pub fn eq(&self, val: &PyValue) -> Bitmap {
-        if let Some(res) = self.exact.get(val){
-            res.clone().as_bitmap()
-        } else {
-            Bitmap::new()
-        }
-    }
-
-}
-
-pub struct QueryMapIter<'a> {
-    exact_iter: std::collections::hash_map::Iter<'a, PyValue, HybridSet>,
-}
-
-impl<'a> Iterator for QueryMapIter<'a> {
-    type Item = (&'a PyValue, &'a HybridSet);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some((k, v)) = self.exact_iter.next() {
-            return Some((k, v));
-        }
-        None
-    }
-}
-
-pub fn filter_index_by_hashes(
-    index: &FxHashMap<SmolStr, Box<QueryMap>>,
-    query: &FxHashMap<SmolStr, HashSet<PyValue>>,
-) -> Bitmap {
-    let mut sets_iter: Bitmap = Bitmap::new();
-    let mut first = true;
-
-    let mut sorted_query: Vec<_> = query.iter().collect();
-    sorted_query.sort_by_key(|(attr, hashes)| {
-        index.get(*attr)
-            .map(|attr_map| {
-                hashes.iter()
-                    .map(|h| attr_map.exact.get(h).map_or(0, |set| set.cardinality()))
-                    .sum::<u64>()
-            })
-            .unwrap_or(0)
-    });
-    
-    let mut per_attr_match: Bitmap = Bitmap::new();
-
-    for (attr, allowed_hashes) in sorted_query {
-        per_attr_match.clear();
-
-
-        if let None = index.get(attr) {
-            return Bitmap::new();
-        } 
-        let attr_map = &index[attr];
-        
-        for h in allowed_hashes {
-            if let Some(matched) = attr_map.get(h) {
-                per_attr_match |= matched.clone().as_bitmap();
-            }
-        }
-
-        if !first && sets_iter.is_empty() {
-            return Bitmap::new();
-        }
-
-        if first {
-            sets_iter = per_attr_match.clone();
-        } else {
-            sets_iter &= &per_attr_match;
-        }
-        first = false;
-    }
-
-    sets_iter
-}
-
-
-#[derive(Clone, Debug)]
-pub enum QueryExpr {
-    Eq(SmolStr, PyValue),
-    Ne(SmolStr, PyValue),
-    Gt(SmolStr, PyValue),
-    Ge(SmolStr, PyValue),
-    Lt(SmolStr, PyValue),
-    Le(SmolStr, PyValue),
-    Bt(SmolStr, PyValue, PyValue),
-    In(SmolStr, Vec<PyValue>),
-    Not(Box<QueryExpr>),
-    And(Vec<QueryExpr>),
-    Or(Vec<QueryExpr>),
-}
-
-pub fn attr_parts(attr: SmolStr) -> (SmolStr, Option<SmolStr>) {
-    if let Some(pos) = attr.find('.') {
-        let (base, rest) = attr.split_at(pos);
-        let rest = &rest[1..];
-        (SmolStr::new(base), Some(SmolStr::new(rest)))
-    } else {
-        (attr, None)
-    }
-}
-
-pub fn evaluate_nested_query(
-    nested_map: &Box<QueryMap>,
-    expr: &QueryExpr,
-) -> Bitmap {
-    let wrapper = PyQueryExpr{inner: expr.clone()};
-    let reduced = nested_map.nested.reduced_query(wrapper);
-    nested_map.get_allowed_parents(&reduced.allowed_items).as_bitmap()
-}
-
-pub fn evaluate_query(
-    index: &FxHashMap<SmolStr, Box<QueryMap>>,
-    all_valid: &Bitmap,
-    expr: &QueryExpr,
-) -> Bitmap {
-    match expr {
-        QueryExpr::Eq(attr, value) => {
-            let (base_attr, nested_attr) = attr_parts(attr.clone());
-            if let Some(qm) = index.get(&base_attr){
-                if let Some(nested_attr) = nested_attr {
-                    let query = QueryExpr::Eq(nested_attr, value.clone());
-                    evaluate_nested_query(qm, &query)
-                } else {
-                    qm.eq(value)
-                }
-            } else {
-                Bitmap::new()
-            }
-        }
-        QueryExpr::Ne(attr, value ) => {
-            evaluate_query(
-                index,
-                all_valid,
-                &QueryExpr::Not(Box::new(QueryExpr::Eq(attr.clone(), value.clone())))
-            )
-        }
-        QueryExpr::In(attr, values) => {
-            let (base_attr, nested_attr) = attr_parts(attr.clone());
-            let mut result;
-            if let Some(qm) = index.get(&base_attr) {
-                
-                if let Some(nested_attr) = nested_attr {
-                    let query = QueryExpr::In(nested_attr, values.clone());
-                    result = evaluate_nested_query(qm, &query);
-                } else {
-                    result = Bitmap::new();
-                    for v in values {
-                        if let Some(bm) = qm.get(v) {
-                            result.or_inplace(&bm.clone().as_bitmap());
-                            result.and_inplace(all_valid);
-                        }
-                    }
-                }
-
-            } else {
-                result = Bitmap::new();
-            }
-            result
-        }
-        QueryExpr::Gt(attr, value) => {
-            let (base_attr, nested_attr) = attr_parts(attr.clone());
-            if let Some(qm) = index.get(&base_attr) {
-                if let Some(nested_attr) = nested_attr {
-                    let query = QueryExpr::Gt(nested_attr, value.clone());
-                    evaluate_nested_query(qm, &query)
-                } else {
-                    qm.gt(value.get_primitive(), all_valid)
-                }
-            } else {
-                Bitmap::new()
-            }
-        }
-        QueryExpr::Ge(attr, value) => {
-            let (base_attr, nested_attr) = attr_parts(attr.clone());
-            if let Some(qm) = index.get(&base_attr) {
-                if let Some(nested_attr) = nested_attr {
-                    let query = QueryExpr::Ge(nested_attr, value.clone());
-                    evaluate_nested_query(qm, &query)
-                } else {
-                    qm.ge(value.get_primitive(), all_valid)
-                }
-            } else {
-                Bitmap::new()
-            }
-        }
-        QueryExpr::Le(attr, value) => {
-            let (base_attr, nested_attr) = attr_parts(attr.clone());
-            if let Some(qm) = index.get(&base_attr) {
-                if let Some(nested_attr) = nested_attr {
-                    let query = QueryExpr::Le(nested_attr, value.clone());
-                    evaluate_nested_query(qm, &query)
-                } else {
-                    qm.le(value.get_primitive(), all_valid)
-                }
-            } else {
-                Bitmap::new()
-            }
-        }
-        QueryExpr::Lt(attr, value) => {
-            let (base_attr, nested_attr) = attr_parts(attr.clone());
-            if let Some(qm) = index.get(&base_attr) {
-                if let Some(nested_attr) = nested_attr {
-                    let query = QueryExpr::Lt(nested_attr, value.clone());
-                    evaluate_nested_query(qm, &query)
-                } else {
-                    qm.lt(value.get_primitive(), all_valid)
-                }
-            } else {
-                Bitmap::new()
-            }
-        }
-        QueryExpr::Bt(attr, lower, upper) => {
-            let (base_attr, nested_attr) = attr_parts(attr.clone());
-            if let Some(qm) = index.get(&base_attr) {
-                if let Some(nested_attr) = nested_attr {
-                    let query = QueryExpr::Bt(nested_attr, lower.clone(), upper.clone());
-                    evaluate_nested_query(qm, &query)
-                } else {
-                    qm.bt(lower.get_primitive(), upper.get_primitive(), all_valid)
-                }
-            } else {
-                Bitmap::new()
-            }
-        }
-        QueryExpr::Not(inner) => {
-            let inner_bm = evaluate_query(index, all_valid, inner);
-                all_valid - &inner_bm
-        }
-        QueryExpr::And(exprs) => {
-            // Evaluate all queries in parallel
-            let mut bitmaps: Vec<Bitmap> = evaluate_queries_vec(index, all_valid, exprs);
-            bitmaps.sort_by_key(|bm| bm.cardinality());
-
-            // Reduce using AND in parallel
-            let result = bitmaps
-                .into_iter()
-                .reduce(|mut a, b| {
-                    a.and_inplace(&b); // mutate `a` in-place
-                    a
-                })
-                .unwrap_or_else(Bitmap::new); // handle empty exprs
-
-            result
-        }
-        QueryExpr::Or(exprs) => {
-            evaluate_queries_vec(index, all_valid, exprs)
-                .into_iter()
-                .reduce(|mut a, b| {
-                    a.or_inplace(&b); // mutate `a` in-place
-                    a
-                })
-                .unwrap_or_else(Bitmap::new) // handle empty exprs
-        }
-    }
-}
-
-pub fn evaluate_queries_vec(
-    index: &FxHashMap<SmolStr, Box<QueryMap>>,
-    all_valid: &Bitmap,
-    exprs: &Vec<QueryExpr>,
-) -> Vec<Bitmap> {
-    exprs
-        .par_iter()
-        .map(|expr| evaluate_query(index, &all_valid, expr))
-        .collect()
-}
-
-pub fn kwargs_to_hash_query<'py>(
-    kwargs: FxHashMap<String, pyo3::Bound<'py, PyAny>>,
-) -> PyResult<FxHashMap<SmolStr, HashSet<PyValue>>> {
-    let mut query = FxHashMap::default();
-
-    for (attr, py_val) in kwargs {
-        let mut hash_set = HashSet::new();
-
-        // Detect if iterable but not string
-        let is_str = py_val.is_instance_of::<PyString>();
-
-        if !is_str {
-            match py_val.try_iter() {
-                Ok(iter) => {
-                    for item in iter {
-                        let lookup_item = PyValue::new(item.unwrap());
-                        hash_set.insert(lookup_item);
-                    }
-                }
-                Err(_) => {
-                    // Not iterable, treat as a single value
-                    hash_set.insert(PyValue::new(py_val));
-                }
-            }
-        } else {
-            // Is a string, treat as a single value
-            hash_set.insert(PyValue::new(py_val));
-        }
-
-        // Single value
-        query.insert(SmolStr::new(attr), hash_set);
-    }
-
-    Ok(query)
 }
