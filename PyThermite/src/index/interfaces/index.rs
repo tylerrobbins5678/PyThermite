@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 
-use crate::index::{Indexable, PyQueryExpr, core::query::kwargs_to_hash_query};
+use crate::index::{Indexable, PyQueryExpr, core::{structures::hybrid_set::HybridSetOps, query::kwargs_to_hash_query}};
 use crate::index::interfaces::filtered_index::FilteredIndex;
 use crate::index::core::index::IndexAPI;
 use crate::index::core::stored_item::StoredItem;

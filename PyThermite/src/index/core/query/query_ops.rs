@@ -8,7 +8,7 @@ use ordered_float::OrderedFloat;
 use pyo3::{PyAny, PyResult, types::{PyAnyMethods, PyString}};
 use smol_str::SmolStr;
 
-use crate::index::{HybridSet, core::query::QueryMap, interfaces::PyQueryExpr, value::{PyValue, RustCastValue}};
+use crate::index::{core::{structures::hybrid_set::{HybridSet, HybridSetOps}, query::QueryMap}, interfaces::PyQueryExpr, value::{PyValue, RustCastValue}};
 use crate::index::core::query::b_tree::Key;
 
 impl QueryMap {

@@ -146,7 +146,6 @@ impl LeafNode {
             self.offset += 1;
         } else {
             self.shift_left(self.offset + remove_index, self.offset + self.num_keys, 1);
-            self.offset -= 1;
         }
 
         self.num_keys -= 1;

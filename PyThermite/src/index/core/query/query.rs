@@ -9,7 +9,7 @@ use smol_str::SmolStr;
 
 const QUERY_DEPTH_LEN: usize = 12;
 
-use crate::index::{HybridSet, Indexable, core::query::attr_parts, value::{PyIterable, PyValue, RustCastValue}};
+use crate::index::{Indexable, core::{structures::hybrid_set::{HybridSet, HybridSetOps}, query::attr_parts}, value::{PyIterable, PyValue, RustCastValue}};
 use crate::index::core::index::IndexAPI;
 use crate::index::core::stored_item::{StoredItem, StoredItemParent};
 use crate::index::core::query::b_tree::{BitMapBTree, Key};
