@@ -21,44 +21,55 @@ impl<T: Default + Copy + Ord, const N: usize> CenteredArray<T, N> {
     }
 
     pub fn union_with(&mut self, other: &CenteredArray<T, N>) {
-        // zipper together two sorted arrays
         let mut i = 0;
         let mut j = 0;
-        let mut data = [T::default(); N];
-        let mut len: usize = 0;
-        while i < self.len && j < other.len() {
-            if self.data[self.offset + i] < other.data[other.offset + j] {
-                data[len] = self.data[self.offset + i];
+
+        let mut out = [T::default(); N];
+        let mut len = 0;
+
+        let a = &self.data[self.offset .. self.offset + self.len];
+        let b = &other.data[other.offset .. other.offset + other.len];
+
+        let a_len = a.len();
+        let b_len = b.len();
+
+        // Main merge loop.
+        while i < a_len && j < b_len {
+            let av = unsafe { *a.get_unchecked(i) };
+            let bv = unsafe { *b.get_unchecked(j) };
+
+            if av < bv {
+                out[len] = av;
                 i += 1;
-            } else if self.data[self.offset + i] > other.data[other.offset + j] {
-                data[len] = other.data[other.offset + j];
-                j += 1;
             } else {
-                data[len] = self.data[self.offset + i];
-                i += 1;
+                out[len] = bv;
+                if av == bv {
+                    i += 1;
+                }
                 j += 1;
             }
             len += 1;
         }
 
-        if i < self.len {
-            let count = self.len - i;
-            data[len..len + count].copy_from_slice(&self.iter()[i..]);
+        // Copy tail of A
+        if i < a_len {
+            let count = a_len - i;
+            out[len..len + count].copy_from_slice(&a[i..]);
             len += count;
         }
 
-        // copy remaining from vals
-        if j < other.len() {
-            let count = other.len() - j;
-            data[len..len + count].copy_from_slice(&other.iter()[j..]);
+        // Copy tail of B
+        if j < b_len {
+            let count = b_len - j;
+            out[len..len + count].copy_from_slice(&b[j..]);
             len += count;
         }
 
-        self.data = data;
+        // Finalize
+        self.data = out;
         self.offset = 0;
         self.len = len;
         self.recenter();
-
     }
 
     pub fn insert(&mut self, value: T) {
@@ -71,8 +82,9 @@ impl<T: Default + Copy + Ord, const N: usize> CenteredArray<T, N> {
             self.recenter();
         }
 
-        let idx = match self.iter().binary_search(&value) {
-            Ok(_) => return,  
+        let slice = &self.data[self.offset .. self.offset + self.len];
+        let idx = match slice.binary_search(&value) {
+            Ok(_) => return, // already present
             Err(i) => i,
         };
 
