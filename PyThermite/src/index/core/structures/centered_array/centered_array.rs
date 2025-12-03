@@ -1,5 +1,6 @@
 
 
+#[derive(Clone, Debug)]
 pub struct CenteredArray<T, const N: usize> {
     data: [T; N],
     offset: usize,
@@ -13,6 +14,51 @@ impl<T: Default + Copy + Ord, const N: usize> CenteredArray<T, N> {
             offset: 0,
             len: 0,
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn union_with(&mut self, other: &CenteredArray<T, N>) {
+        // zipper together two sorted arrays
+        let mut i = 0;
+        let mut j = 0;
+        let mut data = [T::default(); N];
+        let mut len: usize = 0;
+        while i < self.len && j < other.len() {
+            if self.data[self.offset + i] < other.data[other.offset + j] {
+                data[len] = self.data[self.offset + i];
+                i += 1;
+            } else if self.data[self.offset + i] > other.data[other.offset + j] {
+                data[len] = other.data[other.offset + j];
+                j += 1;
+            } else {
+                data[len] = self.data[self.offset + i];
+                i += 1;
+                j += 1;
+            }
+            len += 1;
+        }
+
+        if i < self.len {
+            let count = self.len - i;
+            data[len..len + count].copy_from_slice(&self.iter()[i..]);
+            len += count;
+        }
+
+        // copy remaining from vals
+        if j < other.len() {
+            let count = other.len() - j;
+            data[len..len + count].copy_from_slice(&other.iter()[j..]);
+            len += count;
+        }
+
+        self.data = data;
+        self.offset = 0;
+        self.len = len;
+        self.recenter();
+
     }
 
     pub fn insert(&mut self, value: T) {
@@ -207,4 +253,188 @@ mod tests {
         assert_eq!(result, vec![4,5,6,7]);
         assert_eq!(arr.len, 4);
     }
+
+    #[test]
+    fn union_empty_empty() {
+        let mut a = CenteredArray::<u32, 8>::new();
+        let b = CenteredArray::<u32, 8>::new();
+
+        a.union_with(&b);
+        assert_eq!(a.iter(), &[] as &[u32]);
+    }
+
+    #[test]
+    fn union_empty_nonempty() {
+        let mut a = CenteredArray::<u32, 8>::new();
+        let mut b = CenteredArray::<u32, 8>::new();
+        b.insert(3);
+        b.insert(5);
+        b.insert(7);
+
+        a.union_with(&b);
+        assert_eq!(a.iter(), &[3, 5, 7]);
+    }
+
+    #[test]
+    fn union_no_overlap() {
+        let mut a = CenteredArray::<u32, 8>::new();
+        let mut b = CenteredArray::<u32, 8>::new();
+
+        a.insert(1);
+        a.insert(2);
+        a.insert(3);
+
+        b.insert(10);
+        b.insert(11);
+        b.insert(12);
+
+        a.union_with(&b);
+        assert_eq!(a.iter(), &[1, 2, 3, 10, 11, 12]);
+    }
+
+    #[test]
+    fn union_with_overlap() {
+        let mut a = CenteredArray::<u32, 8>::new();
+        let mut b = CenteredArray::<u32, 8>::new();
+
+        a.insert(1);
+        a.insert(3);
+        a.insert(5);
+
+        b.insert(2);
+        b.insert(3);
+        b.insert(7);
+
+        a.union_with(&b);
+        assert_eq!(a.iter(), &[1, 2, 3, 5, 7]);
+    }
+
+    #[test]
+    fn union_duplicate_values() {
+        let mut a = CenteredArray::<u32, 8>::new();
+        let mut b = CenteredArray::<u32, 8>::new();
+
+        a.insert(2);
+        a.insert(2);
+        a.insert(3);
+
+        b.insert(2);
+        b.insert(4);
+
+        a.union_with(&b);
+        assert_eq!(a.iter(), &[2, 3, 4]);
+    }
+
+    #[test]
+    fn union_offset_handling() {
+        // force offset movement
+        let mut a = CenteredArray::<u32, 8>::new();
+        let mut b = CenteredArray::<u32, 8>::new();
+
+        // Insert in a way that pushes offset right or left
+        for x in [5, 10, 15] {
+            a.insert(x);
+        }
+        for x in [1, 20] {
+            b.insert(x);
+        }
+
+        a.union_with(&b);
+        assert_eq!(a.iter(), &[1, 5, 10, 15, 20]);
+    }
+
+    #[test]
+    fn union_symmetric() {
+        let mut a = CenteredArray::<u32, 8>::new();
+        let mut b = CenteredArray::<u32, 8>::new();
+
+        for x in [1, 3, 5, 7] {
+            a.insert(x);
+        }
+        for x in [3, 4, 7, 8] {
+            b.insert(x);
+        }
+
+        let mut u1 = a.clone();
+        u1.union_with(&b);
+
+        let mut u2 = b.clone();
+        u2.union_with(&a);
+
+        assert_eq!(u1.iter(), u2.iter());
+        assert_eq!(u1.iter(), &[1, 3, 4, 5, 7, 8]);
+    }
+    
+    #[test]
+    fn test_union_simple() {
+        let mut a = CenteredArray::<u32, 16>::new();
+        a.insert(1);
+        a.insert(3);
+        a.insert(5);
+
+        let mut b = CenteredArray::<u32, 16>::new();
+        b.insert(2);
+        b.insert(4);
+        b.insert(6);
+
+        a.union_with(&b);
+
+        assert_eq!(a.iter(), &[1u32,2,3,4,5,6] );
+
+        // offset should be centered and correct
+        assert_eq!(a.len(), 6);
+        let expected_offset = (16 - a.len()) / 2;
+        assert_eq!(a.offset, expected_offset);
+        assert_eq!(&a.data[a.offset..a.offset + a.len], a.iter());
+    }
+
+    #[test]
+    fn test_union_with_duplicates() {
+        let mut a = CenteredArray::<u32, 16>::new();
+        a.insert(1);
+        a.insert(3);
+        a.insert(5);
+
+        let mut b = CenteredArray::<u32, 16>::new();
+        b.insert(3);
+        b.insert(4);
+        b.insert(5);
+
+        a.union_with(&b);
+
+        assert_eq!(a.iter(), &[1u32,3,4,5]);
+        let expected_offset = (16 - a.len()) / 2;
+        assert_eq!(a.offset, expected_offset);
+    }
+
+    #[test]
+    fn test_union_empty_with_nonempty() {
+        let mut a = CenteredArray::<u32, 16>::new();
+        let mut b = CenteredArray::<u32, 16>::new();
+
+        b.insert(10);
+        b.insert(20);
+
+        a.union_with(&b);
+
+        assert_eq!(a.iter(), &[10u32,20]);
+
+        let expected_offset = (16 - a.len()) / 2;
+        assert_eq!(a.offset, expected_offset);
+    }
+
+    #[test]
+    fn test_union_both_empty() {
+        let mut a = CenteredArray::<u32, 16>::new();
+        let b = CenteredArray::<u32, 16>::new();
+
+        a.union_with(&b);
+
+        assert_eq!(a.iter(), &[] as &[u32]);
+        assert_eq!(a.len(), 0);
+
+        // offset can be anything valid, but recenter() will move it to midpoint
+        assert_eq!(a.offset, (16 - 0) / 2);
+    }
+
 }
