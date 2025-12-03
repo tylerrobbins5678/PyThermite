@@ -6,7 +6,7 @@ use crate::index::core::structures::{centered_array::CenteredArray, hybrid_set::
 
 #[derive(Clone, Debug)]
 pub struct Small {
-    pub data: CenteredArray<u32, SMALL_LIMIT>,
+    pub data: CenteredArray<SMALL_LIMIT>,
 }
 
 impl Small{
@@ -17,7 +17,7 @@ impl Small{
     }
 
     pub fn of(items: &[u32]) -> Self {
-        let mut arr = CenteredArray::<u32, SMALL_LIMIT>::new();
+        let mut arr = CenteredArray::<SMALL_LIMIT>::new();
         for &item in items {
             arr.insert(item);
         }
@@ -65,7 +65,7 @@ impl Small{
     }
 
     pub fn and_inplace_large(mut self, other: &Bitmap) -> HybridSet {
-        let mut to_keep = CenteredArray::<u32, SMALL_LIMIT>::new();
+        let mut to_keep = CenteredArray::<SMALL_LIMIT>::new();
 
         for &val in self.as_slice() {
             if other.contains(val) {
@@ -84,7 +84,7 @@ impl Small{
             self.data.union_with(&other.data);
             HybridSet::Small(self)
         } else if size <= MED_LIMIT {
-            let mut arr = CenteredArray::<u32, MED_LIMIT>::new();
+            let mut arr = CenteredArray::<MED_LIMIT>::new();
             arr.union_with(&other.data);
             HybridSet::Medium(
                 Medium { data: arr }
@@ -99,7 +99,7 @@ impl Small{
     pub fn or_inplace_medium(self, other: &Medium) -> HybridSet {
         let size = self.len() + other.len();
         if size <= MED_LIMIT {
-            let mut arr = CenteredArray::<u32, MED_LIMIT>::new();
+            let mut arr = CenteredArray::<MED_LIMIT>::new();
             arr.union_with(&other.data);
             HybridSet::Medium(
                 Medium { data: arr }

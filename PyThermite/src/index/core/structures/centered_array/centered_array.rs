@@ -1,29 +1,29 @@
 
 
 #[derive(Clone, Debug)]
-pub struct CenteredArray<T, const N: usize> {
-    data: [T; N],
+pub struct CenteredArray<const N: usize> {
+    data: [u32; N],
     offset: usize,
     len: usize,
 }
 
-impl<T: Default + Copy + Ord, const N: usize> CenteredArray<T, N> {
+impl<const N: usize> CenteredArray<N> {
     pub fn new() -> Self {
         Self {
-            data: [T::default(); N],
+            data: [0u32; N],
             offset: 0,
             len: 0,
         }
     }
 
-    pub fn from_sorted_slice(slice: &[T]) -> Self {
+    pub fn from_sorted_slice(slice: &[u32]) -> Self {
         let mut arr = Self::new();
         arr.data[..slice.len()].copy_from_slice(slice);
         arr.recenter();
         arr
     }
 
-    pub fn consuming_sorted_slice(slice: [T; N]) -> Self {
+    pub fn consuming_sorted_slice(slice: [u32; N]) -> Self {
         let mut arr = Self::new();
         arr.data = slice;
         arr.recenter();
@@ -34,16 +34,16 @@ impl<T: Default + Copy + Ord, const N: usize> CenteredArray<T, N> {
         self.len
     }
 
-    pub fn contains(&self, value: &T) -> bool {
+    pub fn contains(&self, value: &u32) -> bool {
         let slice = &self.data[self.offset .. self.offset + self.len];
         slice.binary_search(value).is_ok()
     }
 
-    pub fn union_with<const M: usize>(&mut self, other: &CenteredArray<T, M>) {
+    pub fn union_with<const M: usize>(&mut self, other: &CenteredArray<M>) {
         let mut i = 0;
         let mut j = 0;
 
-        let mut out = [T::default(); N];
+        let mut out = [0u32; N];
         let mut len = 0;
 
         let a = &self.data[self.offset .. self.offset + self.len];
@@ -91,7 +91,7 @@ impl<T: Default + Copy + Ord, const N: usize> CenteredArray<T, N> {
         self.recenter();
     }
 
-    pub fn and_with<const M: usize>(&mut self, other: &CenteredArray<T, M>) {
+    pub fn and_with<const M: usize>(&mut self, other: &CenteredArray<M>) {
         let len_a = self.len;
         let len_b = other.len;
         let ptr_a = unsafe { self.data.as_ptr().add(self.offset) };
@@ -122,7 +122,7 @@ impl<T: Default + Copy + Ord, const N: usize> CenteredArray<T, N> {
         self.recenter();
     }
 
-    pub fn insert(&mut self, value: T) {
+    pub fn insert(&mut self, value: u32) {
 
         if self.len >= N {
             panic!("CenteredArray full");
@@ -149,7 +149,7 @@ impl<T: Default + Copy + Ord, const N: usize> CenteredArray<T, N> {
         self.len += 1;
     }
 
-    pub fn remove(&mut self, value: &T) -> bool {
+    pub fn remove(&mut self, value: &u32) -> bool {
 
         let slice = &self.data[self.offset .. self.offset + self.len];
         let idx = match slice.binary_search(&value) {
@@ -194,7 +194,7 @@ impl<T: Default + Copy + Ord, const N: usize> CenteredArray<T, N> {
         self.offset = desired_offset;
     }
 
-    pub fn iter(&self) -> &[T] {
+    pub fn iter(&self) -> &[u32] {
         &self.data[self.offset..self.offset + self.len]
     }
 }
@@ -206,7 +206,7 @@ mod tests {
 
     #[test]
     fn test_insert_basic() {
-        let mut arr: CenteredArray<u32, 8> = CenteredArray::new();
+        let mut arr: CenteredArray<8> = CenteredArray::new();
         arr.insert(5);
         arr.insert(2);
         arr.insert(8);
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_insert_duplicates() {
-        let mut arr: CenteredArray<u32, 8> = CenteredArray::new();
+        let mut arr: CenteredArray<8> = CenteredArray::new();
         arr.insert(4);
         arr.insert(4); // duplicate
         arr.insert(2);
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_remove_basic() {
-        let mut arr: CenteredArray<u32, 8> = CenteredArray::new();
+        let mut arr: CenteredArray<8> = CenteredArray::new();
         arr.insert(1);
         arr.insert(3);
         arr.insert(2);
@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn test_remove_first_and_last() {
-        let mut arr: CenteredArray<u32, 5> = CenteredArray::new();
+        let mut arr: CenteredArray<5> = CenteredArray::new();
         arr.insert(10);
         arr.insert(20);
         arr.insert(30);
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_insert_until_full() {
-        let mut arr: CenteredArray<u32, 4> = CenteredArray::new();
+        let mut arr: CenteredArray<4> = CenteredArray::new();
         arr.insert(1);
         arr.insert(2);
         arr.insert(3);
@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn test_shift_behavior() {
-        let mut arr: CenteredArray<u32, 8> = CenteredArray::new();
+        let mut arr: CenteredArray<8> = CenteredArray::new();
         arr.insert(3);
         arr.insert(1);
         arr.insert(5);
@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn test_recenter_after_many_inserts_and_removes() {
-        let mut arr: CenteredArray<u32, 10> = CenteredArray::new();
+        let mut arr: CenteredArray<10> = CenteredArray::new();
 
         for i in 0..8 {
             arr.insert(i);
@@ -319,8 +319,8 @@ mod tests {
 
     #[test]
     fn union_empty_empty() {
-        let mut a = CenteredArray::<u32, 8>::new();
-        let b = CenteredArray::<u32, 8>::new();
+        let mut a = CenteredArray::<8>::new();
+        let b = CenteredArray::<8>::new();
 
         a.union_with(&b);
         assert_eq!(a.iter(), &[] as &[u32]);
@@ -328,8 +328,8 @@ mod tests {
 
     #[test]
     fn union_empty_nonempty() {
-        let mut a = CenteredArray::<u32, 8>::new();
-        let mut b = CenteredArray::<u32, 8>::new();
+        let mut a = CenteredArray::<8>::new();
+        let mut b = CenteredArray::<8>::new();
         b.insert(3);
         b.insert(5);
         b.insert(7);
@@ -340,8 +340,8 @@ mod tests {
 
     #[test]
     fn union_no_overlap() {
-        let mut a = CenteredArray::<u32, 8>::new();
-        let mut b = CenteredArray::<u32, 8>::new();
+        let mut a = CenteredArray::<8>::new();
+        let mut b = CenteredArray::<8>::new();
 
         a.insert(1);
         a.insert(2);
@@ -357,8 +357,8 @@ mod tests {
 
     #[test]
     fn union_with_overlap() {
-        let mut a = CenteredArray::<u32, 8>::new();
-        let mut b = CenteredArray::<u32, 8>::new();
+        let mut a = CenteredArray::<8>::new();
+        let mut b = CenteredArray::<8>::new();
 
         a.insert(1);
         a.insert(3);
@@ -374,8 +374,8 @@ mod tests {
 
     #[test]
     fn union_duplicate_values() {
-        let mut a = CenteredArray::<u32, 8>::new();
-        let mut b = CenteredArray::<u32, 8>::new();
+        let mut a = CenteredArray::<8>::new();
+        let mut b = CenteredArray::<8>::new();
 
         a.insert(2);
         a.insert(2);
@@ -391,8 +391,8 @@ mod tests {
     #[test]
     fn union_offset_handling() {
         // force offset movement
-        let mut a = CenteredArray::<u32, 8>::new();
-        let mut b = CenteredArray::<u32, 8>::new();
+        let mut a = CenteredArray::<8>::new();
+        let mut b = CenteredArray::<8>::new();
 
         // Insert in a way that pushes offset right or left
         for x in [5, 10, 15] {
@@ -408,8 +408,8 @@ mod tests {
 
     #[test]
     fn union_symmetric() {
-        let mut a = CenteredArray::<u32, 8>::new();
-        let mut b = CenteredArray::<u32, 8>::new();
+        let mut a = CenteredArray::<8>::new();
+        let mut b = CenteredArray::<8>::new();
 
         for x in [1, 3, 5, 7] {
             a.insert(x);
@@ -430,12 +430,12 @@ mod tests {
     
     #[test]
     fn test_union_simple() {
-        let mut a = CenteredArray::<u32, 16>::new();
+        let mut a = CenteredArray::<16>::new();
         a.insert(1);
         a.insert(3);
         a.insert(5);
 
-        let mut b = CenteredArray::<u32, 16>::new();
+        let mut b = CenteredArray::<16>::new();
         b.insert(2);
         b.insert(4);
         b.insert(6);
@@ -453,12 +453,12 @@ mod tests {
 
     #[test]
     fn test_union_with_duplicates() {
-        let mut a = CenteredArray::<u32, 16>::new();
+        let mut a = CenteredArray::<16>::new();
         a.insert(1);
         a.insert(3);
         a.insert(5);
 
-        let mut b = CenteredArray::<u32, 16>::new();
+        let mut b = CenteredArray::<16>::new();
         b.insert(3);
         b.insert(4);
         b.insert(5);
@@ -472,8 +472,8 @@ mod tests {
 
     #[test]
     fn test_union_empty_with_nonempty() {
-        let mut a = CenteredArray::<u32, 16>::new();
-        let mut b = CenteredArray::<u32, 16>::new();
+        let mut a = CenteredArray::<16>::new();
+        let mut b = CenteredArray::<16>::new();
 
         b.insert(10);
         b.insert(20);
@@ -488,8 +488,8 @@ mod tests {
 
     #[test]
     fn test_union_both_empty() {
-        let mut a = CenteredArray::<u32, 16>::new();
-        let b = CenteredArray::<u32, 16>::new();
+        let mut a = CenteredArray::<16>::new();
+        let b = CenteredArray::<16>::new();
 
         a.union_with(&b);
 
@@ -503,8 +503,8 @@ mod tests {
 
     #[test]
     fn test_and_with_disjoint() {
-        let mut a: CenteredArray<u32, 8> = CenteredArray::new();
-        let mut b: CenteredArray<u32, 8> = CenteredArray::new();
+        let mut a: CenteredArray<8> = CenteredArray::new();
+        let mut b: CenteredArray<8> = CenteredArray::new();
 
         for x in &[1, 3, 5, 7] {
             a.insert(*x);
@@ -520,8 +520,8 @@ mod tests {
 
     #[test]
     fn test_and_with_partial_overlap() {
-        let mut a: CenteredArray<u32, 8> = CenteredArray::new();
-        let mut b: CenteredArray<u32, 8> = CenteredArray::new();
+        let mut a: CenteredArray<8> = CenteredArray::new();
+        let mut b: CenteredArray<8> = CenteredArray::new();
 
         for x in &[1, 3, 5, 7] {
             a.insert(*x);
@@ -537,8 +537,8 @@ mod tests {
 
     #[test]
     fn test_and_with_full_overlap() {
-        let mut a: CenteredArray<u32, 8> = CenteredArray::new();
-        let mut b: CenteredArray<u32, 8> = CenteredArray::new();
+        let mut a: CenteredArray<8> = CenteredArray::new();
+        let mut b: CenteredArray<8> = CenteredArray::new();
 
         for x in &[1, 2, 3, 4] {
             a.insert(*x);
@@ -552,8 +552,8 @@ mod tests {
 
     #[test]
     fn test_and_with_empty() {
-        let mut a: CenteredArray<u32, 8> = CenteredArray::new();
-        let b: CenteredArray<u32, 8> = CenteredArray::new();
+        let mut a: CenteredArray<8> = CenteredArray::new();
+        let b: CenteredArray<8> = CenteredArray::new();
 
         a.and_with(&b);
         assert_eq!(a.len, 0);
@@ -562,8 +562,8 @@ mod tests {
 
     #[test]
     fn test_and_with_single_element() {
-        let mut a: CenteredArray<u32, 8> = CenteredArray::new();
-        let mut b: CenteredArray<u32, 8> = CenteredArray::new();
+        let mut a: CenteredArray<8> = CenteredArray::new();
+        let mut b: CenteredArray<8> = CenteredArray::new();
 
         a.insert(42);
         b.insert(42);
@@ -572,7 +572,7 @@ mod tests {
         assert_eq!(a.len, 1);
         assert_eq!(a.iter(), &[42]);
 
-        let mut c: CenteredArray<u32, 8> = CenteredArray::new();
+        let mut c: CenteredArray<8> = CenteredArray::new();
         c.insert(1);
         a.and_with(&c);
         assert_eq!(a.len, 0);

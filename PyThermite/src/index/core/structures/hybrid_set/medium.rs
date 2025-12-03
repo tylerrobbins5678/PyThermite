@@ -6,7 +6,7 @@ use crate::index::core::structures::{centered_array::CenteredArray, hybrid_set::
 
 #[derive(Clone, Debug)]
 pub struct Medium {
-    pub data: CenteredArray<u32, MED_LIMIT>,
+    pub data: CenteredArray<MED_LIMIT>,
 }
 
 impl Medium{
@@ -17,7 +17,7 @@ impl Medium{
     }
 
     pub fn of(items: &[u32]) -> Self {
-        let mut arr = CenteredArray::<u32, MED_LIMIT>::new();
+        let mut arr = CenteredArray::<MED_LIMIT>::new();
         for &item in items {
             arr.insert(item);
         }
