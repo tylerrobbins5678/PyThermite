@@ -72,6 +72,37 @@ impl<T: Default + Copy + Ord, const N: usize> CenteredArray<T, N> {
         self.recenter();
     }
 
+    pub fn and_with(&mut self, other: &CenteredArray<T, N>) {
+        let len_a = self.len;
+        let len_b = other.len;
+        let ptr_a = unsafe { self.data.as_ptr().add(self.offset) };
+        let ptr_b = unsafe { other.data.as_ptr().add(other.offset) };
+
+        let mut i = 0;
+        let mut j = 0;
+        let mut len_out = 0;
+
+        while i < len_a && j < len_b {
+            let av = unsafe { *ptr_a.add(i) };
+            let bv = unsafe { *ptr_b.add(j) };
+
+            if av < bv {
+                i += 1;
+            } else if av > bv {
+                j += 1;
+            } else {
+                self.data[len_out] = av; // safe write
+                len_out += 1;
+                i += 1;
+                j += 1;
+            }
+        }
+
+        self.len = len_out;
+        self.offset = 0;
+        self.recenter();
+    }
+
     pub fn insert(&mut self, value: T) {
 
         if self.len >= N {
@@ -450,4 +481,82 @@ mod tests {
         assert_eq!(a.offset, (16 - 0) / 2);
     }
 
+
+    #[test]
+    fn test_and_with_disjoint() {
+        let mut a: CenteredArray<u32, 8> = CenteredArray::new();
+        let mut b: CenteredArray<u32, 8> = CenteredArray::new();
+
+        for x in &[1, 3, 5, 7] {
+            a.insert(*x);
+        }
+        for x in &[2, 4, 6, 8] {
+            b.insert(*x);
+        }
+
+        a.and_with(&b);
+        assert_eq!(a.len, 0);
+        assert!(a.iter().is_empty());
+    }
+
+    #[test]
+    fn test_and_with_partial_overlap() {
+        let mut a: CenteredArray<u32, 8> = CenteredArray::new();
+        let mut b: CenteredArray<u32, 8> = CenteredArray::new();
+
+        for x in &[1, 3, 5, 7] {
+            a.insert(*x);
+        }
+        for x in &[3, 4, 5, 6] {
+            b.insert(*x);
+        }
+
+        a.and_with(&b);
+        assert_eq!(a.len, 2);
+        assert_eq!(a.iter(), &[3, 5]);
+    }
+
+    #[test]
+    fn test_and_with_full_overlap() {
+        let mut a: CenteredArray<u32, 8> = CenteredArray::new();
+        let mut b: CenteredArray<u32, 8> = CenteredArray::new();
+
+        for x in &[1, 2, 3, 4] {
+            a.insert(*x);
+            b.insert(*x);
+        }
+
+        a.and_with(&b);
+        assert_eq!(a.len, 4);
+        assert_eq!(a.iter(), &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_and_with_empty() {
+        let mut a: CenteredArray<u32, 8> = CenteredArray::new();
+        let b: CenteredArray<u32, 8> = CenteredArray::new();
+
+        a.and_with(&b);
+        assert_eq!(a.len, 0);
+        assert!(a.iter().is_empty());
+    }
+
+    #[test]
+    fn test_and_with_single_element() {
+        let mut a: CenteredArray<u32, 8> = CenteredArray::new();
+        let mut b: CenteredArray<u32, 8> = CenteredArray::new();
+
+        a.insert(42);
+        b.insert(42);
+
+        a.and_with(&b);
+        assert_eq!(a.len, 1);
+        assert_eq!(a.iter(), &[42]);
+
+        let mut c: CenteredArray<u32, 8> = CenteredArray::new();
+        c.insert(1);
+        a.and_with(&c);
+        assert_eq!(a.len, 0);
+        assert!(a.iter().is_empty());
+    }
 }
