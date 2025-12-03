@@ -5,8 +5,8 @@ use croaring::bitmap::BitmapIterator;
 
 use crate::index::core::structures::hybrid_set::{small::Small, medium::Medium};
 
-pub const SMALL_LIMIT: usize = 8;
-pub const MED_LIMIT: usize = 256;
+pub const SMALL_LIMIT: usize = 4;
+pub const MED_LIMIT: usize = 32;
 
 #[derive(Clone, Debug)]
 pub enum HybridSet {
@@ -62,12 +62,15 @@ impl HybridSetOps for HybridSet {
             HybridSet::Small(sm) => {
                 if sm.contains(val) {
                     return;
-                }
-                if sm.len < SMALL_LIMIT {
-                    sm.data[sm.len] = val;
-                    sm.len += 1;
+                } else if sm.len() + 1 < SMALL_LIMIT {
+                    sm.add(val);
+                } else if sm.len() + 1 < MED_LIMIT {
+                    let mut md = Medium::new();
+                    md.add(val);
+                    let md = md.or_inplace_small(sm);
+                    *self = md;
                 } else {
-                    let mut bitmap = Bitmap::of(&sm.data[..sm.len]);
+                    let mut bitmap = Bitmap::of(sm.as_slice());
                     bitmap.add(val);
                     *self = HybridSet::Large(bitmap);
                 }
@@ -76,8 +79,8 @@ impl HybridSetOps for HybridSet {
                 if md.contains(val) {
                     return;
                 }
-                if md.len < MED_LIMIT {
-                    md.add_in_order(val);
+                if md.len() < MED_LIMIT {
+                    md.add(val);
                 } else {
                     let mut bitmap = Bitmap::of(md.as_slice());
                     bitmap.add(val);
@@ -116,10 +119,10 @@ impl HybridSetOps for HybridSet {
                     }
             (HybridSet::Small(small), HybridSet::Empty) => HybridSet::Small(small),
 
-            (HybridSet::Medium(_), HybridSet::Empty) => todo!(),
-            (HybridSet::Medium(_), HybridSet::Small(small)) => todo!(),
-            (HybridSet::Medium(_), HybridSet::Medium(_)) => todo!(),
-            (HybridSet::Medium(_), HybridSet::Large(bitmap)) => todo!(),
+            (HybridSet::Medium(md), HybridSet::Empty) => HybridSet::Medium(md),
+            (HybridSet::Medium(md), HybridSet::Small(small)) => md.or_inplace_small(small),
+            (HybridSet::Medium(md), HybridSet::Medium(other_md)) => md.or_inplace_medium(other_md),
+            (HybridSet::Medium(md), HybridSet::Large(bitmap)) => md.or_inplace_large(bitmap),
 
             (HybridSet::Large(mut bitmap), HybridSet::Small(small_other)) => {
                         bitmap.add_many(small_other.as_slice());
@@ -131,7 +134,10 @@ impl HybridSetOps for HybridSet {
                     }
             
             (HybridSet::Large(bitmap), HybridSet::Empty) => HybridSet::Large(bitmap),
-            (HybridSet::Large(bitmap), HybridSet::Medium(_)) => todo!(),
+            (HybridSet::Large(mut bitmap), HybridSet::Medium(md)) => {
+                bitmap.add_many(md.as_slice());
+                HybridSet::Large(bitmap)
+            },
 
             (HybridSet::Empty, HybridSet::Small(_)) => other.clone(),
             (HybridSet::Empty, HybridSet::Large(_)) => other.clone(),
@@ -146,13 +152,30 @@ impl HybridSetOps for HybridSet {
         let old_self = mem::replace(self, HybridSet::Empty);
 
         let replacement = match (old_self, other) {
-            (HybridSet::Small(mut small), HybridSet::Small(small_other)) => {
+            (HybridSet::Small(small), HybridSet::Small(small_other)) => {
                 small.and_inplace_small(&small_other)
             }
-            (HybridSet::Small(mut small), HybridSet::Large(bitmap_other)) => {
-                // Returns Some(new_large) if promoted
+            (HybridSet::Small(small), HybridSet::Large(bitmap_other)) => {
                 small.and_inplace_large(&bitmap_other)
             }
+            (HybridSet::Small(small), HybridSet::Medium(medium)) => {
+                small.and_inplace_medium(medium)
+            },
+
+            (HybridSet::Medium(medium), HybridSet::Small(small)) => {
+                medium.and_inplace_small(small)
+            },
+            (HybridSet::Medium(medium), HybridSet::Medium(other_medium)) => {
+                medium.and_inplace_medium(other_medium)
+            },
+            (HybridSet::Medium(medium), HybridSet::Large(bitmap)) => {
+                medium.and_inplace_large(bitmap)
+            },
+            
+            (HybridSet::Large(mut bitmap), HybridSet::Medium(medium)) => {
+                bitmap.and_inplace(&Bitmap::of(medium.as_slice()));
+                HybridSet::Large(bitmap)
+            },
             (HybridSet::Large(mut bitmap), HybridSet::Small(small_other)) => {
                 bitmap.and_inplace(&Bitmap::of(small_other.as_slice()));
                 HybridSet::Large(bitmap)
@@ -161,18 +184,10 @@ impl HybridSetOps for HybridSet {
                 bitmap.and_inplace(&bitmap_other);
                 HybridSet::Large(bitmap)
             }
-            (HybridSet::Empty, HybridSet::Empty) => todo!(),
-            (HybridSet::Empty, HybridSet::Small(small)) => todo!(),
-            (HybridSet::Empty, HybridSet::Medium(medium)) => todo!(),
-            (HybridSet::Empty, HybridSet::Large(bitmap)) => todo!(),
-            (HybridSet::Small(small), HybridSet::Empty) => todo!(),
-            (HybridSet::Small(small), HybridSet::Medium(medium)) => todo!(),
-            (HybridSet::Medium(medium), HybridSet::Empty) => todo!(),
-            (HybridSet::Medium(medium), HybridSet::Small(small)) => todo!(),
-            (HybridSet::Medium(medium), HybridSet::Medium(other_medium)) => todo!(),
-            (HybridSet::Medium(medium), HybridSet::Large(bitmap)) => todo!(),
-            (HybridSet::Large(bitmap), HybridSet::Empty) => todo!(),
-            (HybridSet::Large(bitmap), HybridSet::Medium(medium)) => todo!(),
+
+            (HybridSet::Empty, _) => HybridSet::Empty,
+            (_, HybridSet::Empty) => HybridSet::Empty,
+            
         };
 
         *self = replacement;
@@ -205,13 +220,10 @@ impl HybridSetOps for HybridSet {
     }
 
     fn of(items: &[u32]) -> Self {
-        if items.len() <= SMALL_LIMIT {
-            let mut data: [u32; SMALL_LIMIT] = [0; SMALL_LIMIT];
-            data[..items.len()].copy_from_slice(&items[..items.len()]);
-            HybridSet::Small(Small {
-                len: items.len(), 
-                data
-            })
+        if items.len() < SMALL_LIMIT {
+            HybridSet::Small( Small::of(items) )
+        } else if items.len() < MED_LIMIT {
+            HybridSet::Medium( Medium::of(items) )
         } else {
             HybridSet::Large( Bitmap::of(items) )
         }

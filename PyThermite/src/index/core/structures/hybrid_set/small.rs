@@ -1,87 +1,94 @@
 use croaring::Bitmap;
 
-use crate::index::core::structures::hybrid_set::{HybridSet, HybridSetOps, hybrid_set::{HybridSetIter, MED_LIMIT, SMALL_LIMIT}, medium::Medium};
+use crate::index::core::structures::{centered_array::CenteredArray, hybrid_set::{HybridSet, HybridSetOps, hybrid_set::{HybridSetIter, MED_LIMIT, SMALL_LIMIT}, medium::Medium}};
 
 
 
 #[derive(Clone, Debug)]
 pub struct Small {
-    pub len: usize,
-    pub data: [u32; SMALL_LIMIT]
+    pub data: CenteredArray<u32, SMALL_LIMIT>,
 }
 
 impl Small{
     pub fn new() -> Self {
         Self{
-            len: 0, 
-            data: [0;SMALL_LIMIT]
+            data: CenteredArray::new(),
         }
+    }
+
+    pub fn of(items: &[u32]) -> Self {
+        let mut arr = CenteredArray::<u32, SMALL_LIMIT>::new();
+        for &item in items {
+            arr.insert(item);
+        }
+        Self {
+            data: arr,
+        }
+    }
+
+    pub fn add(&mut self, val: u32) {
+        self.data.insert(val);
     }
 
     pub fn as_slice(&self) -> &[u32] {
-        &self.data[..self.len]
+        &self.data.iter()
     }
 
     pub fn contains(&self, idx: u32) -> bool {
-        self.data[..self.len].contains(&idx)
+        self.data.contains(&idx)
     }
 
     pub fn cardinality(&self) -> u64 {
-        self.len as u64
+        self.len() as u64
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len == 0
+        self.len() == 0
     }
 
     pub fn remove(&mut self, idx: u32) {
-        if let Some(pos) = self.data[..self.len].iter().position(|&x| x == idx) {
-            for i in pos..self.len - 1 {
-                self.data[i] = self.data[i + 1];
-            }
-            self.len -= 1;
-        }
+        self.data.remove(&idx);
     }
 
-    pub fn and_inplace_small(&mut self, other: &Small) -> HybridSet {
-        let mut new_data: [u32; SMALL_LIMIT] = [0; SMALL_LIMIT];
-        let mut new_len = 0;
+    pub fn and_inplace_small(mut self, other: &Small) -> HybridSet {
+        self.data.and_with(&other.data);
+        HybridSet::Small(self)
+    }
+
+    pub fn and_inplace_medium(mut self, other: &Medium) -> HybridSet {
+        self.data.and_with(&other.data);
+        HybridSet::Small(self)
+    }
+
+    pub fn and_inplace_large(mut self, other: &Bitmap) -> HybridSet {
+        let mut to_keep = CenteredArray::<u32, SMALL_LIMIT>::new();
 
         for &val in self.as_slice() {
             if other.contains(val) {
-                new_data[new_len] = val;
-                new_len += 1;
+                to_keep.insert(val);
             }
         }
 
-        HybridSet::Small(Small {
-            len: new_len,
-            data: new_data,
-        })
-    }
+        self.data = to_keep;
 
-    pub fn and_inplace_large(&mut self, other: &Bitmap) -> HybridSet {
-        let mut new_data: [u32; SMALL_LIMIT] = [0; SMALL_LIMIT];
-        let mut new_len = 0;
-
-        for &val in self.as_slice() {
-            if other.contains(val) {
-                new_data[new_len] = val;
-                new_len += 1;
-            }
-        }
-
-        HybridSet::Small(Small {
-            len: new_len,
-            data: new_data,
-        })
+        HybridSet::Small(self)
     }
 
     pub fn or_inplace_small(mut self, other: &Small) -> HybridSet {
-        if self.len + other.len <= SMALL_LIMIT {
-            self.data[self.len .. self.len + other.len].copy_from_slice(&other.data[..other.len]);
-            self.len += other.len;
+        let size = self.len() + other.len();
+        if size <= SMALL_LIMIT {
+            self.data.union_with(&other.data);
             HybridSet::Small(self)
+        } else if size <= MED_LIMIT {
+            let mut arr = CenteredArray::<u32, MED_LIMIT>::new();
+            arr.union_with(&other.data);
+            HybridSet::Medium(
+                Medium { data: arr }
+            )
         } else {
             let mut new_bmp = Bitmap::of(self.as_slice());
             new_bmp.add_many(other.as_slice());
@@ -90,14 +97,13 @@ impl Small{
     }
 
     pub fn or_inplace_medium(self, other: &Medium) -> HybridSet {
-        if self.len + other.len <= MED_LIMIT {
-            let mut new_med = HybridSet::Medium(
-                Medium { len: 0, data: other.data }
-            );
-            for &val in self.as_slice() {
-                new_med.add(val);
-            }
-            new_med
+        let size = self.len() + other.len();
+        if size <= MED_LIMIT {
+            let mut arr = CenteredArray::<u32, MED_LIMIT>::new();
+            arr.union_with(&other.data);
+            HybridSet::Medium(
+                Medium { data: arr }
+            )
         } else {
             let mut new_bmp = Bitmap::of(self.as_slice());
             new_bmp.add_many(other.as_slice());

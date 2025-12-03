@@ -16,11 +16,30 @@ impl<T: Default + Copy + Ord, const N: usize> CenteredArray<T, N> {
         }
     }
 
+    pub fn from_sorted_slice(slice: &[T]) -> Self {
+        let mut arr = Self::new();
+        arr.data[..slice.len()].copy_from_slice(slice);
+        arr.recenter();
+        arr
+    }
+
+    pub fn consuming_sorted_slice(slice: [T; N]) -> Self {
+        let mut arr = Self::new();
+        arr.data = slice;
+        arr.recenter();
+        arr
+    }
+
     pub fn len(&self) -> usize {
         self.len
     }
 
-    pub fn union_with(&mut self, other: &CenteredArray<T, N>) {
+    pub fn contains(&self, value: &T) -> bool {
+        let slice = &self.data[self.offset .. self.offset + self.len];
+        slice.binary_search(value).is_ok()
+    }
+
+    pub fn union_with<const M: usize>(&mut self, other: &CenteredArray<T, M>) {
         let mut i = 0;
         let mut j = 0;
 
@@ -72,7 +91,7 @@ impl<T: Default + Copy + Ord, const N: usize> CenteredArray<T, N> {
         self.recenter();
     }
 
-    pub fn and_with(&mut self, other: &CenteredArray<T, N>) {
+    pub fn and_with<const M: usize>(&mut self, other: &CenteredArray<T, M>) {
         let len_a = self.len;
         let len_b = other.len;
         let ptr_a = unsafe { self.data.as_ptr().add(self.offset) };
