@@ -101,7 +101,8 @@ impl<T: Default + Copy + Ord, const N: usize> CenteredArray<T, N> {
 
     pub fn remove(&mut self, value: &T) -> bool {
 
-        let idx = match self.iter().binary_search(value) {
+        let slice = &self.data[self.offset .. self.offset + self.len];
+        let idx = match slice.binary_search(&value) {
             Ok(i) => i,
             Err(_) => return false, // not found
         };
