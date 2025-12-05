@@ -1,3 +1,5 @@
+use std::ptr;
+
 
 
 #[derive(Clone, Debug)]
@@ -40,44 +42,38 @@ impl<const N: usize> CenteredArray<N> {
     }
 
     pub fn union_with<const M: usize>(&mut self, other: &CenteredArray<M>) {
-        let mut i = 0;
-        let mut j = 0;
-
-        let mut out = [0u32; N];
-        let mut len = 0;
-
-        let a = &self.data[self.offset .. self.offset + self.len];
-        let b = &other.data[other.offset .. other.offset + other.len];
+        let a = &self.data[self.offset..self.offset + self.len];
+        let b = &other.data[other.offset..other.offset + other.len];
 
         let a_len = a.len();
         let b_len = b.len();
 
-        // Main merge loop.
+        let mut i = 0;
+        let mut j = 0;
+        let mut len = 0;
+
+        let mut out = [0u32; N];
+
+        // Branchless merge loop
         while i < a_len && j < b_len {
             let av = unsafe { *a.get_unchecked(i) };
             let bv = unsafe { *b.get_unchecked(j) };
 
-            if av < bv {
-                out[len] = av;
-                i += 1;
-            } else {
-                out[len] = bv;
-                if av == bv {
-                    i += 1;
-                }
-                j += 1;
-            }
+            let min = av.min(bv);
+            out[len] = min;
             len += 1;
+
+            // Advance pointers: i if av <= bv, j if bv <= av
+            i += (av <= bv) as usize;
+            j += (bv <= av) as usize;
         }
 
-        // Copy tail of A
+        // Copy remaining elements (only one will have leftovers)
         if i < a_len {
             let count = a_len - i;
             out[len..len + count].copy_from_slice(&a[i..]);
             len += count;
         }
-
-        // Copy tail of B
         if j < b_len {
             let count = b_len - j;
             out[len..len + count].copy_from_slice(&b[j..]);
@@ -171,11 +167,17 @@ impl<const N: usize> CenteredArray<N> {
     }
 
     fn shift_right(&mut self, start: usize, end: usize, amount: usize) {
-        self.data.copy_within(start..end, start + amount);
+        unsafe {
+            let ptr = self.data.as_mut_ptr();
+            std::ptr::copy(ptr.add(start), ptr.add(start + amount), end - start);
+        }
     }
 
     fn shift_left(&mut self, start: usize, end: usize, amount: usize) {
-        self.data.copy_within(start..end, start - amount);
+        unsafe {
+            let ptr = self.data.as_mut_ptr();
+            std::ptr::copy(ptr.add(start), ptr.add(start - amount), end - start);
+        }
     }
 
     fn recenter(&mut self) {

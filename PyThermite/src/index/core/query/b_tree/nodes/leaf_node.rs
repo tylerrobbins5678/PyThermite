@@ -7,7 +7,7 @@ use croaring::Bitmap;
 use crate::index::core::query::b_tree::{FULL_KEYS, Key, MAX_KEYS, composite_key::CompositeKey128};
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LeafNode {
     pub keys: [Option<CompositeKey128>; MAX_KEYS],
     pub num_keys: usize,

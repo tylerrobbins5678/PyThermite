@@ -6,7 +6,7 @@ pub use interfaces::filtered_index::FilteredIndex;
 pub use interfaces::PyQueryExpr;
 
 
-mod core;
+pub mod core;
 mod interfaces;
 mod indexable;
 mod value;

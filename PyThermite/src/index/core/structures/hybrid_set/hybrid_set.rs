@@ -5,8 +5,8 @@ use croaring::bitmap::BitmapIterator;
 
 use crate::index::core::structures::hybrid_set::{small::Small, medium::Medium};
 
-pub const SMALL_LIMIT: usize = 4;
-pub const MED_LIMIT: usize = 32;
+pub const SMALL_LIMIT: usize = 8;
+pub const MED_LIMIT: usize = 8;
 
 #[derive(Clone, Debug)]
 pub enum HybridSet {
@@ -60,9 +60,7 @@ impl HybridSetOps for HybridSet {
     fn add(&mut self, val: u32) {
         match self {
             HybridSet::Small(sm) => {
-                if sm.contains(val) {
-                    return;
-                } else if sm.len() + 1 < SMALL_LIMIT {
+                if sm.len() + 1 < SMALL_LIMIT {
                     sm.add(val);
                 } else if sm.len() + 1 < MED_LIMIT {
                     let mut md = Medium::new();
@@ -76,9 +74,6 @@ impl HybridSetOps for HybridSet {
                 }
             }
             HybridSet::Medium(md) => {
-                if md.contains(val) {
-                    return;
-                }
                 if md.len() < MED_LIMIT {
                     md.add(val);
                 } else {
