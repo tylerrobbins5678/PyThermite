@@ -243,20 +243,22 @@ impl InternalNode {
         }
 
         self.children_bitmaps[self.offset + idx] = Some(left_bitmap);
+        let insert: usize;
 
         // shift to make room for child
         if self.offset > 0 && (idx < self.num_keys / 2) {
             self.shift_left(self.offset, self.offset + idx, 1);
+            insert = self.offset + idx;
             self.offset -= 1;
         } else {
-            idx += 1;
-            self.shift_right(self.offset + idx, self.offset + self.num_keys, 1);
+            insert = self.offset + idx + 1;
+            self.shift_right(insert, self.offset + self.num_keys, 1);
         }
 
         // Insert separator key at idx - greater than current key
-        self.keys[self.offset + idx] = Some(sep_key);
-        self.children[self.offset + idx] = Some(Box::new(new_node));
-        self.children_bitmaps[self.offset + idx] = Some(new_bitmap);
+        self.keys[insert] = Some(sep_key);
+        self.children[insert] = Some(Box::new(new_node));
+        self.children_bitmaps[insert] = Some(new_bitmap);
 
         self.num_keys += 1;
 
