@@ -213,7 +213,7 @@ impl InternalNode {
     }
 
 
-    fn split_and_insert(&mut self, key: CompositeKey128, mut idx: usize) {
+    fn split_and_insert(&mut self, key: CompositeKey128, idx: usize) {
         let left_node = self.children[self.offset + idx].as_deref_mut().unwrap();
         let (sep_key, mut new_node, mut new_bitmap) = match left_node {
             BitMapBTreeNode::Leaf(leaf) => {
@@ -234,7 +234,7 @@ impl InternalNode {
             .expect("Bitmap must be initialized before split")
             - &new_bitmap;
         
-        if key < sep_key {
+        if key <= sep_key {
             left_node.insert(key);
             left_bitmap.add(key.get_id());
         } else {
@@ -247,14 +247,13 @@ impl InternalNode {
 
         // shift to make room for child
         if self.offset > 0 && (idx < self.num_keys / 2) {
-            self.shift_left(self.offset, self.offset + idx, 1);
-            insert = self.offset + idx;
+            self.shift_left(self.offset, self.offset + idx + 1, 1);
             self.offset -= 1;
         } else {
-            insert = self.offset + idx + 1;
-            self.shift_right(insert, self.offset + self.num_keys, 1);
+            self.shift_right(self.offset + idx + 1, self.offset + self.num_keys, 1);
         }
-
+        
+        insert = self.offset + idx + 1;
         // Insert separator key at idx - greater than current key
         self.keys[insert] = Some(sep_key);
         self.children[insert] = Some(Box::new(new_node));

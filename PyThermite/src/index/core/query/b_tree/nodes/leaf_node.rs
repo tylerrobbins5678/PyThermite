@@ -146,6 +146,7 @@ impl LeafNode {
             self.offset += 1;
         } else {
             self.shift_left(self.offset + remove_index, self.offset + self.num_keys, 1);
+            self.offset -= 1;  // this logically does not belong, but it wont work without it??
         }
 
         self.num_keys -= 1;
