@@ -1,8 +1,8 @@
 use pyo3::{Bound, IntoPyObject, Py, PyAny, PyRef, Python};
 use std::{hash::{Hash, Hasher}, sync::{Arc, Weak}};
 
-use crate::index::core::index::IndexAPI;
-use crate::index::{HybridSet, Indexable};
+use crate::index::core::{structures::hybrid_set::{HybridSet, HybridSetOps}, index::IndexAPI};
+use crate::index::Indexable;
 
 #[derive(Clone, Debug)]
 pub struct StoredItemParent {

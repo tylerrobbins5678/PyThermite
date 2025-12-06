@@ -4,7 +4,7 @@ use croaring::Bitmap;
 use crate::index::core::query::b_tree::{FULL_KEYS, Key, MAX_KEYS, composite_key::CompositeKey128, ranged_b_tree::{BitMapBTreeNode, Positioning}};
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InternalNode {
     pub keys: [Option<CompositeKey128>; MAX_KEYS],
     pub children: [Option<Box<BitMapBTreeNode>>; MAX_KEYS],
@@ -33,9 +33,6 @@ impl InternalNode {
             self.children[to] = self.children[i].take();
             self.children_bitmaps[to] = self.children_bitmaps[i].take();
         }
-        if start == self.offset {
-            self.offset -= amount;
-        }
     }
 
     fn shift_right(&mut self, start: usize, end: usize, amount: usize) {
@@ -45,9 +42,6 @@ impl InternalNode {
             self.keys[to] = self.keys[i].take();
             self.children[to] = self.children[i].take();
             self.children_bitmaps[to] = self.children_bitmaps[i].take();
-        }
-        if start == self.offset {
-            self.offset += amount;
         }
     }
 
@@ -109,6 +103,7 @@ impl InternalNode {
             probe.cmp(&key)
         });
 
+        // subtract 1 as the child index is always less than or equal to the key index
         let idx = match idx {
             Ok(_) => panic!("Duplicate ID and key insert"),
             Err(i) => {
@@ -239,7 +234,6 @@ impl InternalNode {
             .expect("Bitmap must be initialized before split")
             - &new_bitmap;
         
-        
         if key <= sep_key {
             left_node.insert(key);
             left_bitmap.add(key.get_id());
@@ -247,16 +241,23 @@ impl InternalNode {
             new_node.insert(key);
             new_bitmap.add(key.get_id());
         }
-            
+
         self.children_bitmaps[self.offset + idx] = Some(left_bitmap);
+        let insert: usize;
 
         // shift to make room for child
-        self.shift_right(self.offset + idx + 1, self.offset + self.num_keys, 1);
-
+        if self.offset > 0 && (idx < self.num_keys / 2) {
+            self.shift_left(self.offset, self.offset + idx + 1, 1);
+            self.offset -= 1;
+        } else {
+            self.shift_right(self.offset + idx + 1, self.offset + self.num_keys, 1);
+        }
+        
+        insert = self.offset + idx + 1;
         // Insert separator key at idx - greater than current key
-        self.keys[self.offset + idx + 1] = Some(sep_key);
-        self.children[self.offset + idx + 1] = Some(Box::new(new_node));
-        self.children_bitmaps[self.offset + idx + 1] = Some(new_bitmap);
+        self.keys[insert] = Some(sep_key);
+        self.children[insert] = Some(Box::new(new_node));
+        self.children_bitmaps[insert] = Some(new_bitmap);
 
         self.num_keys += 1;
 

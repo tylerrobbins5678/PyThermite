@@ -9,9 +9,8 @@ path = "PyThermite/src/lib.rs"
 # "cdylib" is necessary to produce a shared library for Python to import from.
 crate-type = ["cdylib"]
 
-[[bin]]
-name = "main"
-path = "PyThermite/src/rs/main.rs"
+[profile.release]
+opt-level = 3
 
 [dependencies]
 croaring = "2.3.1"

@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
-use crate::index::{HybridHashmap, HybridSet, Indexable, PyQueryExpr, interfaces::filtered_index::FilteredIndex};
+use crate::index::{HybridHashmap, Indexable, PyQueryExpr, core::structures::hybrid_set::{HybridSet, HybridSetOps}, interfaces::filtered_index::FilteredIndex};
 use crate::index::core::query::{QueryMap, attr_parts, evaluate_query, filter_index_by_hashes, kwargs_to_hash_query};
 
 use crate::index::core::stored_item::StoredItem;

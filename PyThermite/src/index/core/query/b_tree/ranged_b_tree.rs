@@ -3,8 +3,8 @@ use croaring::Bitmap;
 
 use crate::index::core::query::b_tree::{Key, composite_key::CompositeKey128, nodes::{InternalNode, LeafNode}};
 
-pub const MAX_KEYS: usize = 96;
-pub const FILL_FACTOR: f64 = 0.9;
+pub const MAX_KEYS: usize = 128;
+pub const FILL_FACTOR: f64 = 0.97;
 pub const FULL_KEYS: usize = (MAX_KEYS as f64 * FILL_FACTOR) as usize;
 
 
@@ -118,7 +118,7 @@ impl Default for BitMapBTree {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BitMapBTreeNode {
     Internal(InternalNode),
     Leaf(LeafNode),
@@ -168,6 +168,13 @@ impl BitMapBTreeNode {
             BitMapBTreeNode::Internal(internal) => {
                 internal.query_range(lower, upper, allowed)
             }
+        }
+    }
+
+    pub fn least_key(&self) -> CompositeKey128 {
+        match self {
+            BitMapBTreeNode::Internal(internal_node) => internal_node.least_key(),
+            BitMapBTreeNode::Leaf(leaf_node) => leaf_node.least_key(),
         }
     }
 
