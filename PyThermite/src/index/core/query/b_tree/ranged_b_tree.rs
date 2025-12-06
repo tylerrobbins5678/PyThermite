@@ -3,7 +3,7 @@ use croaring::Bitmap;
 
 use crate::index::core::query::b_tree::{Key, composite_key::CompositeKey128, nodes::{InternalNode, LeafNode}};
 
-pub const MAX_KEYS: usize = 128;
+pub const MAX_KEYS: usize = 96;
 pub const FILL_FACTOR: f64 = 0.97;
 pub const FULL_KEYS: usize = (MAX_KEYS as f64 * FILL_FACTOR) as usize;
 
@@ -53,8 +53,8 @@ impl BitMapBTree {
                 let mut new_root = InternalNode::new();
 
                 // Insert separator key
-                new_root.keys[base_index] = Some(left_leaf.least_key());
-                new_root.keys[base_index + 1] = Some(sep_key.clone());
+                new_root.keys[base_index] = left_leaf.least_key();
+                new_root.keys[base_index + 1] = sep_key;
 
                 // Insert the two children
                 new_root.children[base_index] = Some(Box::new(BitMapBTreeNode::Leaf(left_leaf)));
@@ -77,8 +77,8 @@ impl BitMapBTree {
 
                 let mut new_root = InternalNode::new();
 
-                new_root.keys[base_index] = Some(left_internal.least_key());
-                new_root.keys[base_index + 1] = Some(sep_key.clone());
+                new_root.keys[base_index] = left_internal.least_key();
+                new_root.keys[base_index + 1] = sep_key;
 
                 new_root.children[base_index] = Some(Box::new(BitMapBTreeNode::Internal(left_internal)));
                 new_root.children[base_index + 1] = Some(Box::new(BitMapBTreeNode::Internal(right_internal)));
@@ -205,12 +205,11 @@ impl BitMapBTreeNode {
 
                 // Print keys within range
                 for i in internal.offset..internal.offset + internal.num_keys {
-                    if let Some(key) = &internal.keys[i] {
-                        if (lower.is_none() || key >= lower.unwrap())
-                            && (upper.is_none() || key <= upper.unwrap())
-                        {
-                            println!("{pad}  *Key[{i}] = {:?}", key);
-                        }
+                    let key = &internal.keys[i];
+                    if (lower.is_none() || key >= lower.unwrap())
+                        && (upper.is_none() || key <= upper.unwrap())
+                    {
+                        println!("{pad}  *Key[{i}] = {:?}", key);
                     }
                 }
 
@@ -249,7 +248,8 @@ impl BitMapBTreeNode {
                 println!("{pad}🧭 Internal (offset: {}, keys: {}):", internal.offset, internal.num_keys);
                 for i in 0..MAX_KEYS {
                     let mark = if i >= internal.offset && i < internal.offset + internal.num_keys { "*" } else { " " };
-                    if let Some(key) = &internal.keys[i] {
+                    let key = &internal.keys[i];
+                    if *key != CompositeKey128::default() {
                         println!("{pad}  {mark}Key[{i}] = {:?}", key);
                     } else {
                         println!("{pad}   Key[{i}] = <empty>");

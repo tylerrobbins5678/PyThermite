@@ -146,7 +146,7 @@ impl QueryMap {
 
     pub fn eq(&self, val: &PyValue) -> Bitmap {
 
-        if let Some(res) = self.read_exact().get(val){
+        if let Some(res) = self.exact.get(val){
             res.clone().as_bitmap()
         } else {
             Bitmap::new()
@@ -182,7 +182,7 @@ pub fn filter_index_by_hashes(
         index.get(*attr)
             .map(|attr_map| {
                 hashes.iter()
-                    .map(|h| attr_map.read_exact().get(h).map_or(0, |set| set.cardinality()))
+                    .map(|h| attr_map.exact.get(h).map_or(0, |set| set.cardinality()))
                     .sum::<u64>()
             })
             .unwrap_or(0)
@@ -200,8 +200,8 @@ pub fn filter_index_by_hashes(
         let attr_map = &index[attr];
         
         for h in allowed_hashes {
-            if let Some(matched) = attr_map.get(&attr_map.read_exact(),h) {
-                per_attr_match |= matched.clone().as_bitmap();
+            if let Some(matched) = attr_map.exact.get(h) {
+                per_attr_match |= matched.as_bitmap();
             }
         }
 
@@ -292,7 +292,7 @@ pub fn evaluate_query(
                 } else {
                     result = Bitmap::new();
                     for v in values {
-                        if let Some(bm) = qm.get(&qm.read_exact(),v) {
+                        if let Some(bm) = qm.exact.get(v) {
                             result.or_inplace(&bm.clone().as_bitmap());
                             result.and_inplace(all_valid);
                         }

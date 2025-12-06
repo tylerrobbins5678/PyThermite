@@ -1,6 +1,6 @@
-use std::{ops::Deref, sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak}};
+use std::{collections::hash_map::Entry, ops::Deref, sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak}};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use croaring::Bitmap;
 use ordered_float::OrderedFloat;
 use pyo3::{Py, Python, types::{PyListMethods, PySetMethods, PyTupleMethods}};
@@ -9,14 +9,14 @@ use smol_str::SmolStr;
 
 const QUERY_DEPTH_LEN: usize = 12;
 
-use crate::index::{Indexable, core::{structures::hybrid_set::{HybridSet, HybridSetOps}, query::attr_parts}, value::{PyIterable, PyValue, RustCastValue}};
+use crate::index::{Indexable, core::{query::attr_parts, structures::{hybrid_set::{HybridSet, HybridSetOps}, shards::ShardedHashMap}}, value::{PyIterable, PyValue, RustCastValue}};
 use crate::index::core::index::IndexAPI;
 use crate::index::core::stored_item::{StoredItem, StoredItemParent};
 use crate::index::core::query::b_tree::{BitMapBTree, Key};
 
 #[derive(Default)]
 pub struct QueryMap {
-    pub exact: RwLock<FxHashMap<PyValue, HybridSet>>,
+    pub exact: ShardedHashMap<PyValue, HybridSet>,
     pub parent: Weak<IndexAPI>,
     pub num_ordered: RwLock<BitMapBTree>,
     pub nested: Arc<IndexAPI>,
@@ -28,7 +28,7 @@ unsafe impl Sync for QueryMap {}
 impl QueryMap {
     pub fn new(parent: Weak<IndexAPI>) -> Self{
         Self{
-            exact: RwLock::new(FxHashMap::default()),
+            exact: ShardedHashMap::<PyValue, HybridSet>::with_shard_count(64),
             parent: parent.clone(),
             num_ordered: RwLock::new(BitMapBTree::new()),
             nested: Arc::new(IndexAPI::new(Some(parent))),
@@ -36,13 +36,15 @@ impl QueryMap {
     }
 
     fn insert_exact(&self, value: &PyValue, obj_id: u32){
-        let mut writer = self.write_exact();
-        if let Some(existing) = writer.get_mut(&value) {
-            existing.add(obj_id);
-        } else {
-            // lazily create only if needed
-            let hybrid_set = HybridSet::of(&[obj_id]);
-            writer.insert(value.clone(), hybrid_set);
+        let mut shard = self.exact.get_shard(&value);
+        let entry = shard.entry(value.clone());
+        match entry {
+            Entry::Occupied(mut o) => {
+                o.get_mut().add(obj_id);
+            }
+            Entry::Vacant(v) => {
+                v.insert(HybridSet::of(&[obj_id]));
+            }
         }
     }
 
@@ -154,30 +156,26 @@ impl QueryMap {
     }
 
     pub fn check_prune(&self, val: &PyValue) {
-        let reader = self.read_exact();
-        if reader.contains_key(val) && reader[val].is_empty(){
-            drop(reader);
-            let mut writer = self.write_exact();
-            writer.remove(val);
-        }
-    }
-
-    pub fn merge(&self, other: &Self) {
-        let mut writer = self.write_exact();
-        let other_reader = other.read_exact();
-        for (val, bm) in writer.iter_mut() {
-            if let Some(other) = other.get(&other_reader, &val){
-                bm.or_inplace(other);
+        let mut shard = self.exact.get_shard(&val);
+        if let Some(ev) = shard.get(val) {
+            if ev.is_empty() {
+                shard.remove(val); // no clone needed
             }
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.read_exact().is_empty()
+    pub fn merge(&self, other: &Self) {
+        // Iterate over all values in `self` mutably
+        self.exact.for_each_mut(|key_self, bm_self| {
+            // Try to get the corresponding value from `other`
+            if let Some(bm_other) = other.exact.get(key_self) {
+                bm_self.or_inplace(&bm_other);
+            }
+        });
     }
 
-    pub fn contains(&self, key: &PyValue) -> bool{
-        self.read_exact().contains_key(key)
+    pub fn is_empty(&self) -> bool {
+        self.exact.is_empty()
     }
 
     pub fn get<'a>(
@@ -197,12 +195,9 @@ impl QueryMap {
     }
 
     fn remove_exact(&self, py_value: &PyValue, idx: u32) {
-        let reader = self.read_exact();
-        if let Some(_) = reader.get(py_value) {
-            drop(reader);
-            let mut writer = self.write_exact();
-            let hybrid_set = writer.get_mut(py_value).unwrap();
-            hybrid_set.remove(idx);
+        let mut shard = self.exact.get_shard(py_value);
+        if let Some(hs) = shard.get_mut(py_value){
+            hs.remove(idx);
         }
     }
 
@@ -264,11 +259,10 @@ impl QueryMap {
         };
     }
 
-    pub fn remove(&self, filter_bm: &HybridSet){
-        let mut writer = self.write_exact();
-        for (_, bm) in writer.iter_mut() {
+    pub fn remove(&self, filter_bm: &HybridSet) {
+        self.exact.for_each_mut(|_, bm| {
             bm.and_inplace(filter_bm);
-        }
+        });
     }
 
     pub fn group_by(&self, sub_query: Option<SmolStr>) -> Option<SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]>> {
@@ -291,10 +285,9 @@ impl QueryMap {
                 },
                 None => {
                     let mut res:SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]> = SmallVec::new();
-                    let reader = self.read_exact();
-                    for (k, v) in reader.iter() {
+                    self.exact.for_each(|k, v| {
                         res.push((k.clone(), v.clone()));
-                    }
+                    });
                     Some(res)
                 },
             }
@@ -311,12 +304,6 @@ impl QueryMap {
 
 
 impl QueryMap {
-    pub fn read_exact(&self) -> std::sync::RwLockReadGuard<'_, FxHashMap<PyValue, HybridSet>> {
-        self.exact.read().unwrap()
-    }
-    pub fn write_exact(&self) -> std::sync::RwLockWriteGuard<'_, FxHashMap<PyValue, HybridSet>> {
-        self.exact.write().unwrap()
-    }
     pub fn read_num_ordered(&self) -> std::sync::RwLockReadGuard<'_, BitMapBTree> {
         self.num_ordered.read().unwrap()
     }

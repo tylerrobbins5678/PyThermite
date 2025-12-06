@@ -6,7 +6,7 @@ use crate::index::core::query::b_tree::{FULL_KEYS, Key, MAX_KEYS, composite_key:
 
 #[derive(Debug, Clone)]
 pub struct InternalNode {
-    pub keys: [Option<CompositeKey128>; MAX_KEYS],
+    pub keys: [CompositeKey128; MAX_KEYS],
     pub children: [Option<Box<BitMapBTreeNode>>; MAX_KEYS],
     pub children_bitmaps: [Option<Bitmap>; MAX_KEYS],
     pub num_keys: usize,
@@ -17,7 +17,7 @@ pub struct InternalNode {
 impl InternalNode {
     pub fn new() -> Self{
         Self{
-            keys: std::array::from_fn(|_| None),
+            keys: [CompositeKey128::default(); MAX_KEYS],
             children: std::array::from_fn(|_| None),
             children_bitmaps: std::array::from_fn(|_| None),
             num_keys: 0,
@@ -29,7 +29,7 @@ impl InternalNode {
         // Shift keys left
         for i in start..end {
             let to: usize = i - amount;
-            self.keys[to] = self.keys[i].take();
+            self.keys[to] = self.keys[i];
             self.children[to] = self.children[i].take();
             self.children_bitmaps[to] = self.children_bitmaps[i].take();
         }
@@ -39,7 +39,7 @@ impl InternalNode {
         // Shift keys right
         for i in (start..end).rev() {
             let to = i + amount;
-            self.keys[to] = self.keys[i].take();
+            self.keys[to] = self.keys[i];
             self.children[to] = self.children[i].take();
             self.children_bitmaps[to] = self.children_bitmaps[i].take();
         }
@@ -50,7 +50,6 @@ impl InternalNode {
         let keys = &self.keys[self.offset..self.offset + self.num_keys];
 
         let pos = keys.binary_search_by(|probe| {
-            let probe = probe.as_ref().unwrap();
             probe.cmp_key(key)
         });
 
@@ -68,25 +67,25 @@ impl InternalNode {
                 if i == 0 { 0 } else { i - 1 }
             },
             (Positioning::LowInclusive, Ok(mut i)) => {
-                while i > 0 && keys[i].as_ref().unwrap() == key {
+                while i > 0 && keys[i] == *key {
                     i -= 1;
                 }
                 i
             },
             (Positioning::LowExclusive, Ok(mut i)) => {
-                while i + 1 < self.num_keys && keys[i + 1].as_ref().unwrap() == key {
+                while i + 1 < self.num_keys && keys[i + 1] == *key {
                     i += 1;
                 }
                 i
             },
             (Positioning::HighInclusive, Ok(mut i)) => {
-                while i + 1 < self.num_keys && keys[i + 1].as_ref().unwrap() == key {
+                while i + 1 < self.num_keys && keys[i + 1] == *key {
                     i += 1;
                 }
                 i
             },
             (Positioning::HighExclusive, Ok(mut i)) => {
-                while i > 0 && keys[i].as_ref().unwrap() == key {
+                while i > 0 && keys[i] == *key {
                     i -= 1;
                 }
                 i
@@ -99,7 +98,6 @@ impl InternalNode {
 
         let keys = &self.keys[self.offset..self.offset + self.num_keys];
         let idx = keys.binary_search_by(|probe| {
-            let probe = probe.as_ref().unwrap();
             probe.cmp(&key)
         });
 
@@ -127,7 +125,6 @@ impl InternalNode {
     pub fn remove(&mut self, key: CompositeKey128) -> bool {
         let keys = &self.keys[self.offset..self.offset + self.num_keys];
         let idx = keys.binary_search_by(|probe| {
-            let probe = probe.as_ref().unwrap();
             probe.cmp(&key)
         });
 
@@ -188,12 +185,12 @@ impl InternalNode {
 
         let mid = self.num_keys  / 2;
         let len = self.num_keys - mid;
-        let mut right_keys = std::array::from_fn(|_| None);
+        let mut right_keys = [CompositeKey128::default(); MAX_KEYS];
         let mut children = std::array::from_fn(|_| None);
         let mut children_bm = std::array::from_fn(|_| None);
         let offset = MAX_KEYS / 4;
         for i in 0..len {
-            right_keys[offset + i] = self.keys[self.offset + mid + i].take();
+            right_keys[offset + i] = self.keys[self.offset + mid + i];
             children[offset + i] = self.children[self.offset + mid + i].take();
             children_bm[offset + i] = self.children_bitmaps[self.offset + mid + i].take();
         }
@@ -201,7 +198,7 @@ impl InternalNode {
         self.num_keys = mid;
         self.recenter();
         (
-            right_keys[offset].clone().expect("invalid offset"),
+            right_keys[offset],
             Self{
                 keys: right_keys,
                 children: children,
@@ -255,7 +252,7 @@ impl InternalNode {
         
         insert = self.offset + idx + 1;
         // Insert separator key at idx - greater than current key
-        self.keys[insert] = Some(sep_key);
+        self.keys[insert] = sep_key;
         self.children[insert] = Some(Box::new(new_node));
         self.children_bitmaps[insert] = Some(new_bitmap);
 
@@ -318,7 +315,7 @@ impl InternalNode {
     }
 
     pub fn least_key(&self) -> CompositeKey128 {
-        self.keys[self.offset].clone().expect("incorrect offset")
+        self.keys[self.offset]
     }
     
 }
