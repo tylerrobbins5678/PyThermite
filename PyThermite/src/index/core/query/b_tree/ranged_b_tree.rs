@@ -190,13 +190,12 @@ impl BitMapBTreeNode {
             BitMapBTreeNode::Leaf(leaf) => {
                 // println!("{pad}📄 Leaf (offset: {}, keys: {}):", leaf.offset, leaf.num_keys);
                 for i in leaf.offset..leaf.offset + leaf.num_keys {
-                    if let Some(key) = &leaf.keys[i] {
-                        // Check if key is in range
-                        if (lower.is_none() || key >= lower.unwrap())
-                            && (upper.is_none() || key <= upper.unwrap())
-                        {
-                            println!("{pad}  *[{i}] = {:?}", key);
-                        }
+                    let key = &leaf.keys[i];
+                    // Check if key is in range
+                    if (lower.is_none() || key >= lower.unwrap())
+                        && (upper.is_none() || key <= upper.unwrap())
+                    {
+                        println!("{pad}  *[{i}] = {:?}", key);
                     }
                 }
             }
@@ -238,7 +237,8 @@ impl BitMapBTreeNode {
                 println!("{pad}📄 Leaf (offset: {}, keys: {}):", leaf.offset, leaf.num_keys);
                 for i in 0..MAX_KEYS {
                     let mark = if i >= leaf.offset && i < leaf.offset + leaf.num_keys { "*" } else { " " };
-                    if let Some(key) = &leaf.keys[i] {
+                    let key = &leaf.keys[i];
+                    if *key != CompositeKey128::default() {
                         println!("{pad}  {mark}[{i}] = {:?}", key);
                     } else {
                         println!("{pad}   [{i}] = <empty>");
