@@ -41,6 +41,7 @@ macro_rules! delegate_mut {
 pub trait HybridSetOps {
     fn new() -> HybridSet;
     fn add(&mut self, value: u32);
+    fn from_sorted(items: &[u32]) -> HybridSet;
     fn of(items: &[u32]) -> HybridSet;
     fn contains(&self, value: u32) -> bool;
     fn is_empty(&self) -> bool;
@@ -55,6 +56,17 @@ pub trait HybridSetOps {
 impl HybridSetOps for HybridSet {
     fn new() -> Self {
         HybridSet::Small(Small::new())
+    }
+
+    fn from_sorted(slice: &[u32]) -> HybridSet {
+        let size = slice.len();
+        if size == 0 {
+            HybridSet::Empty
+        } else if size < MED_LIMIT {
+            HybridSet::Small(Small::from_sorted(slice) )
+        } else {
+            HybridSet::Large(Bitmap::from(slice))
+        }
     }
 
     fn add(&mut self, val: u32) {

@@ -7,7 +7,6 @@ const NUMERIC_MASK: u128 = !0u128 << 32; // Upper 96 bits
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct CompositeKey128 {
     raw: u128, // Packed representation
-    key: Key,
 }
 
 impl CompositeKey128 {
@@ -21,7 +20,6 @@ impl CompositeKey128 {
 
         Self {
             raw: packed,
-            key: value
         }
     }
 
@@ -103,6 +101,14 @@ impl CompositeKey128 {
         let target_raw = key_bits << 32;
         (self.raw & NUMERIC_MASK).cmp(&(target_raw & NUMERIC_MASK))
         // self.raw.cmp(&target_raw)
+    }
+}
+
+impl Default for CompositeKey128 {
+    fn default() -> Self {
+        Self {
+            raw: 0u128,
+        }
     }
 }
 

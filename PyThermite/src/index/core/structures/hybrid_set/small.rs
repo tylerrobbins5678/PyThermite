@@ -26,6 +26,13 @@ impl Small{
         }
     }
 
+    pub fn from_sorted(items: &[u32]) -> Self {
+        let slf = Self {
+            data: CenteredArray::from_sorted_slice(items)
+        };
+        slf
+    }
+
     pub fn add(&mut self, val: u32) {
         self.data.insert(val);
     }
