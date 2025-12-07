@@ -216,12 +216,12 @@ impl InternalNode {
             BitMapBTreeNode::Leaf(leaf) => {
                 let (k, right_leaf) = leaf.split();
                 let bm = right_leaf.get_bitmap();
-                (k, BitMapBTreeNode::Leaf(right_leaf), bm)
+                (k, BitMapBTreeNode::Leaf(Box::new(right_leaf)), bm)
             }
             BitMapBTreeNode::Internal(internal) => {
                 let (k, right_internal) = internal.split();
                 let bm = right_internal.get_bitmap();
-                (k, BitMapBTreeNode::Internal(right_internal), bm)
+                (k, BitMapBTreeNode::Internal(Box::new(right_internal)), bm)
             }
         };
 

@@ -22,7 +22,7 @@ pub struct BitMapBTree {
 impl BitMapBTree {
     pub fn new() -> Self {
         Self {
-            root: Box::new(BitMapBTreeNode::Leaf(LeafNode::new())),
+            root: Box::new(BitMapBTreeNode::Leaf(Box::new(LeafNode::new()))),
         }
     }
 
@@ -40,7 +40,7 @@ impl BitMapBTree {
 
     fn split_root(&mut self) {
         // Extract the current root node
-        let old_root = std::mem::replace(&mut self.root, Box::new(BitMapBTreeNode::Leaf(LeafNode::new())));
+        let old_root = std::mem::replace(&mut self.root, Box::new(BitMapBTreeNode::Leaf(Box::new(LeafNode::new()))));
         let base_index = MAX_KEYS / 2;
 
         match *old_root {
@@ -58,7 +58,7 @@ impl BitMapBTree {
 
                 // Insert the two children
                 new_root.children[base_index] = Some(Box::new(BitMapBTreeNode::Leaf(left_leaf)));
-                new_root.children[base_index + 1] = Some(Box::new(BitMapBTreeNode::Leaf(right_leaf)));
+                new_root.children[base_index + 1] = Some(Box::new(BitMapBTreeNode::Leaf(Box::new(right_leaf))));
 
                 // Initialize children bitmaps
                 new_root.children_bitmaps[base_index] = new_root.children[base_index].as_ref().map(|child| child.get_bitmap());
@@ -67,7 +67,7 @@ impl BitMapBTree {
                 new_root.num_keys = 2;
                 new_root.offset = base_index;
 
-                self.root = Box::new(BitMapBTreeNode::Internal(new_root));
+                self.root = Box::new(BitMapBTreeNode::Internal(Box::new(new_root)));
             }
 
             BitMapBTreeNode::Internal(mut internal) => {
@@ -81,7 +81,7 @@ impl BitMapBTree {
                 new_root.keys[base_index + 1] = sep_key;
 
                 new_root.children[base_index] = Some(Box::new(BitMapBTreeNode::Internal(left_internal)));
-                new_root.children[base_index + 1] = Some(Box::new(BitMapBTreeNode::Internal(right_internal)));
+                new_root.children[base_index + 1] = Some(Box::new(BitMapBTreeNode::Internal(Box::new(right_internal))));
 
                 new_root.children_bitmaps[base_index] = new_root.children[base_index].as_ref().map(|child| child.get_bitmap());
                 new_root.children_bitmaps[base_index + 1] = new_root.children[base_index + 1].as_ref().map(|child| child.get_bitmap());
@@ -89,7 +89,7 @@ impl BitMapBTree {
                 new_root.num_keys = 2;
                 new_root.offset = base_index;
 
-                self.root = Box::new(BitMapBTreeNode::Internal(new_root));
+                self.root = Box::new(BitMapBTreeNode::Internal(Box::new(new_root)));
             }
         }
     }
@@ -120,8 +120,8 @@ impl Default for BitMapBTree {
 
 #[derive(Debug, Clone)]
 pub enum BitMapBTreeNode {
-    Internal(InternalNode),
-    Leaf(LeafNode),
+    Internal(Box<InternalNode>),
+    Leaf(Box<LeafNode>),
 }
 
 impl BitMapBTreeNode {

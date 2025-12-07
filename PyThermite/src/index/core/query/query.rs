@@ -28,7 +28,7 @@ unsafe impl Sync for QueryMap {}
 impl QueryMap {
     pub fn new(parent: Weak<IndexAPI>) -> Self{
         Self{
-            exact: ShardedHashMap::<PyValue, HybridSet>::with_shard_count(64),
+            exact: ShardedHashMap::<PyValue, HybridSet>::with_shard_count(16),
             parent: parent.clone(),
             num_ordered: RwLock::new(BitMapBTree::new()),
             nested: Arc::new(IndexAPI::new(Some(parent))),
