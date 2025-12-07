@@ -266,3 +266,24 @@ impl BitMapBTreeNode {
         }
     }
 }
+
+// 
+// pub struct BitMapBTreeNodeIter<'a> {
+//     node: &'a BitMapBTreeNode,
+//     idx: usize,
+// }
+// 
+// impl<'a> Iterator for BitMapBTreeNodeIter<'a> {
+//     type Item = (u128, &'a Bitmap); // numeric key, bitmap of object IDs
+// 
+//     fn next(&mut self) -> Option<Self::Item> {
+//         if self.idx >= self.node.num_keys {
+//             None
+//         } else {
+//             let key = self.node.keys[self.idx].raw & NUMERIC_MASK; // group key
+//             let bitmap = self.node.children_bitmaps[self.idx].as_ref().unwrap();
+//             self.idx += 1;
+//             Some((key, bitmap))
+//         }
+//     }
+// }

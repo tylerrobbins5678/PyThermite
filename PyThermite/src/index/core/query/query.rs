@@ -131,11 +131,11 @@ impl QueryMap {
         // Insert into the right ordered map based on primitive type
         match &value.get_primitive() {
             RustCastValue::Int(i) => {
-                self.insert_exact(value, obj_id);
+                //self.insert_exact(value, obj_id);
                 self.insert_num_ordered(Key::Int(*i), obj_id);
             }
             RustCastValue::Float(f) => {
-                self.insert_exact(value, obj_id);
+                //elf.insert_exact(value, obj_id);
                 self.insert_num_ordered(Key::FloatOrdered(OrderedFloat(*f)), obj_id);
             }
             RustCastValue::Ind(index_obj) => {
@@ -233,11 +233,11 @@ impl QueryMap {
     pub fn remove_id(&self, py_value: &PyValue, idx: u32) {
         match &py_value.get_primitive(){
             RustCastValue::Int(i) => {
-                self.remove_exact(py_value, idx);
+                // self.remove_exact(py_value, idx);
                 self.remove_num_ordered(Key::Int(*i), idx);
             }
             RustCastValue::Float(f) => {
-                self.remove_exact(py_value, idx);
+                // self.remove_exact(py_value, idx);
                 self.remove_num_ordered(Key::FloatOrdered(OrderedFloat(*f)), idx);
             }
             RustCastValue::Str(_) => {

@@ -144,30 +144,33 @@ impl QueryMap {
         )
     }
 
-    pub fn eq(&self, val: &PyValue) -> Bitmap {
+    pub fn eq(&self, val: &PyValue, all_valid: &Bitmap) -> Bitmap {
 
-        if let Some(res) = self.exact.get(val){
-            res.clone().as_bitmap()
-        } else {
-            Bitmap::new()
+        match val.get_primitive() {
+            RustCastValue::Int(i) => {
+                self.read_num_ordered().range_query(
+                    Bound::Included(&Key::Int(*i)),
+                    Bound::Included(&Key::Int(*i)),
+                    all_valid
+                )
+            }
+            RustCastValue::Float(f) => {
+                self.read_num_ordered().range_query(
+                    Bound::Included(&Key::FloatOrdered(OrderedFloat(*f))),
+                    Bound::Included(&Key::FloatOrdered(OrderedFloat(*f))),
+                    all_valid
+                )
+            }
+            _ => {
+                if let Some(res) = self.exact.get(val){
+                    res.as_bitmap()
+                } else {
+                    Bitmap::new()
+                }
+            }
         }
     }
 
-}
-
-pub struct QueryMapIter<'a> {
-    pub(crate) exact_iter: std::collections::hash_map::Iter<'a, PyValue, HybridSet>,
-}
-
-impl<'a> Iterator for QueryMapIter<'a> {
-    type Item = (&'a PyValue, &'a HybridSet);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some((k, v)) = self.exact_iter.next() {
-            return Some((k, v));
-        }
-        None
-    }
 }
 
 pub fn filter_index_by_hashes(
@@ -176,21 +179,10 @@ pub fn filter_index_by_hashes(
 ) -> Bitmap {
     let mut sets_iter: Bitmap = Bitmap::new();
     let mut first = true;
-
-    let mut sorted_query: Vec<_> = query.iter().collect();
-    sorted_query.sort_by_key(|(attr, hashes)| {
-        index.get(*attr)
-            .map(|attr_map| {
-                hashes.iter()
-                    .map(|h| attr_map.exact.get(h).map_or(0, |set| set.cardinality()))
-                    .sum::<u64>()
-            })
-            .unwrap_or(0)
-    });
     
     let mut per_attr_match: Bitmap = Bitmap::new();
 
-    for (attr, allowed_hashes) in sorted_query {
+    for (attr, allowed_hashes) in query.iter() {
         per_attr_match.clear();
 
 
@@ -268,7 +260,7 @@ pub fn evaluate_query(
                     let query = QueryExpr::Eq(nested_attr, value.clone());
                     evaluate_nested_query(qm, &query)
                 } else {
-                    qm.eq(value)
+                    qm.eq(value, all_valid)
                 }
             } else {
                 Bitmap::new()
@@ -292,10 +284,13 @@ pub fn evaluate_query(
                 } else {
                     result = Bitmap::new();
                     for v in values {
-                        if let Some(bm) = qm.exact.get(v) {
-                            result.or_inplace(&bm.clone().as_bitmap());
-                            result.and_inplace(all_valid);
-                        }
+                        let mut r = evaluate_query(
+                            index,
+                            all_valid,
+                            &QueryExpr::Eq(attr.clone(), v.clone())
+                        );
+                        r.and_inplace(all_valid);
+                        result.or_inplace(&r);
                     }
                 }
 
@@ -407,7 +402,7 @@ pub fn evaluate_queries_vec(
     exprs: &Vec<QueryExpr>,
 ) -> Vec<Bitmap> {
     exprs
-        .par_iter()
+        .iter()
         .map(|expr| evaluate_query(index, &all_valid, expr))
         .collect()
 }
