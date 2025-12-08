@@ -4,31 +4,43 @@ use ordered_float::OrderedFloat;
 use crate::index::core::query::b_tree::Key;
 
 const EXPONENT_BIAS: u16 = 16383;
-const NUMERIC_MASK: u128 = !0u128 << 32; // Upper 96 bits
+const NUMERIC_MASK: u128 = !0u128 << 76; // Upper 76 bits
+
+
+const EXPONENT_SHIFT: u16 = 11;
+const MANTISSA_SHIFT: u16 = 63;
+
+const FLOAT_LENGTH: u16 = 76;
+const FLOAT_SHIFT: u16 = 128 - FLOAT_LENGTH;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct CompositeKey128 {
     raw: u128, // Packed representation
+
+    // [f76][u1][u32]
+    // f76 - 76 bit floating point number
+    // bool - type - float => true / int => false
+    // u32 - ID attached to said number
 }
 
 impl CompositeKey128 {
     /// Constructs a CompositeKey128 from an f64 and u32 ID.
     pub fn new(value: Key, id: u32) -> Self {
         let float_bits = match value {
-            Key::Int(int) => Self::encode_i64_to_float96(int),
-            Key::FloatOrdered(float) => Self::encode_f64_to_float96(float),
+            Key::Int(int) => Self::encode_i64_to_float76(int),
+            Key::FloatOrdered(float) => Self::encode_f64_to_float76(float),
         };
-        let packed = (float_bits << 32) | (id as u128);
+        let packed = (float_bits << FLOAT_SHIFT) | (id as u128);
 
         Self {
             raw: packed,
         }
     }
 
-    fn encode_f64_to_float96(val: OrderedFloat<f64>) -> u128 {
+    fn encode_f64_to_float76(val: OrderedFloat<f64>) -> u128 {
 
         if val.0 == 0.0 {
-            return 1u128 << 95;
+            return 1u128 << FLOAT_SHIFT - 1;
         }
 
         let bits = val.to_bits();
@@ -62,7 +74,7 @@ impl CompositeKey128 {
 
     }
 
-    fn encode_i64_to_float96(n: i64) -> u128 {
+    fn encode_i64_to_float76(n: i64) -> u128 {
         if n == 0 {
             return 1u128 << 95;
         }
@@ -86,7 +98,7 @@ impl CompositeKey128 {
 
     }
 
-    pub fn decode_float96(encoded: u128) -> f64 {
+    pub fn decode_float(encoded: u128) -> f64 {
         let mut key = encoded & ((1u128 << 96)-1);
 
         if key == 1u128 << 95 { return 0.0; }
@@ -151,8 +163,8 @@ impl CompositeKey128 {
 
     pub fn cmp_key(&self, key: &Key) -> std::cmp::Ordering {
         let key_bits = match key {
-            Key::Int(int) => Self::encode_i64_to_float96(*int),
-            Key::FloatOrdered(float) => Self::encode_f64_to_float96(*float),
+            Key::Int(int) => Self::encode_i64_to_float76(*int),
+            Key::FloatOrdered(float) => Self::encode_f64_to_float76(*float),
         };
 
         let target_raw = key_bits << 32;
@@ -215,8 +227,8 @@ mod tests {
 
         for &val in &values {
             let ordered = OrderedFloat(val);
-            let key_bits = CompositeKey128::encode_f64_to_float96(ordered);
-            let decoded = CompositeKey128::decode_float96(key_bits);
+            let key_bits = CompositeKey128::encode_f64_to_float76(ordered);
+            let decoded = CompositeKey128::decode_float(key_bits);
             println!("input  : {:064b}", val.to_bits());
             println!("decoded: {:064b}", decoded.to_bits());
             assert!(
@@ -233,9 +245,9 @@ mod tests {
         let values = [0, 1, -1, 42, -42, -2^53 + 1, 2^53 - 1];
 
         for &val in &values {
-            let key_bits = CompositeKey128::encode_i64_to_float96(val);
+            let key_bits = CompositeKey128::encode_i64_to_float76(val);
             // Decode using the float decoder
-            let decoded = CompositeKey128::decode_float96(key_bits);
+            let decoded = CompositeKey128::decode_float(key_bits);
             // integers will be exactly representable as f64
             println!("raw    : {:128b}", key_bits);
             println!("input  : {:064b}", (val as f64).to_bits());
@@ -254,7 +266,7 @@ mod tests {
         let values = [0, 1, 42, -1, -42, i64::MIN + 1, i64::MAX];
 
         for &val in &values {
-            let key_bits = CompositeKey128::encode_i64_to_float96(val);
+            let key_bits = CompositeKey128::encode_i64_to_float76(val);
             // Decode using the float decoder
             let decoded = CompositeKey128::decode_i64(key_bits);
             // integers will be exactly representable as f64

@@ -301,7 +301,7 @@ impl QueryMap {
                     if Some(key_val) != current_val {
                         // push previous group if exists
                         if let Some(cv) = current_val {
-                            let pyval = PyValue::from_primitave(RustCastValue::Float(CompositeKey128::decode_float96(cv)));
+                            let pyval = PyValue::from_primitave(RustCastValue::Float(CompositeKey128::decode_float(cv)));
                             let hset = HybridSet::Large(current_bitmap.clone());
                             res.push((pyval, hset));
                             current_bitmap.clear();
@@ -314,7 +314,7 @@ impl QueryMap {
 
                 // push last group
                 if let Some(cv) = current_val {
-                    let pyval = PyValue::from_primitave(RustCastValue::Float(CompositeKey128::decode_float96(cv)));
+                    let pyval = PyValue::from_primitave(RustCastValue::Float(CompositeKey128::decode_float(cv)));
                     let hset = HybridSet::Large(current_bitmap);
                     res.push((pyval, hset));
                 }
