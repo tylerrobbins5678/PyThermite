@@ -217,7 +217,7 @@ dependencies = [
 
 [[package]]
 name = "pythermite"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "arc-swap",
  "croaring",
