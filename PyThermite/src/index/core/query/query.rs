@@ -9,7 +9,7 @@ use smol_str::SmolStr;
 
 const QUERY_DEPTH_LEN: usize = 12;
 
-use crate::index::{Indexable, core::{query::attr_parts, structures::{hybrid_set::{HybridSet, HybridSetOps}, shards::ShardedHashMap}}, value::{PyIterable, PyValue, RustCastValue}};
+use crate::index::{Indexable, core::{query::{attr_parts, b_tree::{composite_key::CompositeKey128, ranged_b_tree::BitMapBTreeIter}}, structures::{hybrid_set::{HybridSet, HybridSetOps}, shards::ShardedHashMap}}, value::{PyIterable, PyValue, RustCastValue}};
 use crate::index::core::index::IndexAPI;
 use crate::index::core::stored_item::{StoredItem, StoredItemParent};
 use crate::index::core::query::b_tree::{BitMapBTree, Key};
@@ -265,34 +265,62 @@ impl QueryMap {
         });
     }
 
-    pub fn group_by(&self, sub_query: Option<SmolStr>) -> Option<SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]>> {
-        if let Some(sub_q) = sub_query {
-            let (_, parts) = attr_parts(sub_q);
-            match parts {
-                Some(rest) => {
-                    let groups = self.nested.group_by(rest);
-                    if let Some(r) = groups {
-                        
-                        let mut res: SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]> = SmallVec::new();
-                        for (py_value, allowed) in r {
-                            let allowed_parents = self.get_allowed_parents(&allowed.as_bitmap());
-                            res.push((py_value, allowed_parents));
-                        }
-                        Some(res)
-                    } else {
-                        None
+    pub fn group_by(&self, sub_query: SmolStr) -> Option<SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]>> {
+        let (_, parts) = attr_parts(sub_query);
+        match parts {
+            Some(rest) => {
+                let groups = self.nested.group_by(rest);
+                if let Some(r) = groups {
+                    
+                    let mut res: SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]> = SmallVec::new();
+                    for (py_value, allowed) in r {
+                        let allowed_parents = self.get_allowed_parents(&allowed.as_bitmap());
+                        res.push((py_value, allowed_parents));
                     }
-                },
-                None => {
-                    let mut res:SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]> = SmallVec::new();
-                    self.exact.for_each(|k, v| {
-                        res.push((k.clone(), v.clone()));
-                    });
                     Some(res)
-                },
-            }
-        } else{
-            None
+                } else {
+                    None
+                }
+            },
+            None => {
+                let mut res:SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]> = SmallVec::new();
+                self.exact.for_each(|k, v| {
+                    res.push((k.clone(), v.clone()));
+                });
+
+                let iter_guard = &self.read_num_ordered();
+                let bitmap_iter = BitMapBTreeIter::new(iter_guard);
+
+                let mut current_val: Option<u128> = None;
+                let mut current_bitmap: Bitmap = Bitmap::new();
+
+                for composite_key in bitmap_iter {
+                    let id = composite_key.get_id();
+                    let key_val = composite_key.get_value_bits();
+
+                    if Some(key_val) != current_val {
+                        // push previous group if exists
+                        if let Some(cv) = current_val {
+                            let pyval = PyValue::from_primitave(RustCastValue::Float(CompositeKey128::decode_float96(cv)));
+                            let hset = HybridSet::Large(current_bitmap.clone());
+                            res.push((pyval, hset));
+                            current_bitmap.clear();
+                        }
+                        current_val = Some(key_val);
+                    }
+
+                    current_bitmap.add(id);
+                }
+
+                // push last group
+                if let Some(cv) = current_val {
+                    let pyval = PyValue::from_primitave(RustCastValue::Float(CompositeKey128::decode_float96(cv)));
+                    let hset = HybridSet::Large(current_bitmap);
+                    res.push((pyval, hset));
+                }
+
+                Some(res)
+            },
         }
     }
 

@@ -1,7 +1,7 @@
 use std::ops::Bound;
 use croaring::Bitmap;
 
-use crate::index::core::query::b_tree::{FULL_KEYS, Key, MAX_KEYS, composite_key::CompositeKey128, ranged_b_tree::{BitMapBTreeNode, Positioning}};
+use crate::index::core::query::b_tree::{FULL_KEYS, Key, MAX_KEYS, composite_key::CompositeKey128, nodes::leaf_node::LeafNodeIter, ranged_b_tree::{BitMapBTreeNode, Positioning}};
 
 
 #[derive(Debug, Clone)]
@@ -318,4 +318,58 @@ impl InternalNode {
         self.keys[self.offset]
     }
     
+}
+
+
+pub struct InternalNodeIter<'a> {
+    node: &'a InternalNode,
+    child_idx: usize,
+    current_child_iter: Option<Box<dyn Iterator<Item = CompositeKey128> + 'a>>,
+}
+
+
+impl<'a> InternalNodeIter<'a> {
+    pub fn new(node: &'a InternalNode) -> Self {
+        Self {
+            node,
+            child_idx: 0,
+            current_child_iter: None,
+        }
+    }
+}
+
+
+impl<'a> Iterator for InternalNodeIter<'a> {
+    type Item = CompositeKey128;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            // If we have a current child iterator, try to advance it
+            if let Some(iter) = &mut self.current_child_iter {
+                if let Some(key) = iter.next() {
+                    return Some(key);
+                } else {
+                    // exhausted this child → drop it
+                    self.current_child_iter = None;
+                }
+            }
+
+            // Move to the next child
+            if self.child_idx >= self.node.num_keys {
+                return None; // all children done
+            }
+
+            if let Some(child) = &self.node.children[self.child_idx] {
+                // Create iterator for child
+                let iter: Box<dyn Iterator<Item = CompositeKey128> + 'a> = match child.as_ref() {
+                    BitMapBTreeNode::Leaf(leaf) => Box::new(LeafNodeIter::new(leaf)),
+                    BitMapBTreeNode::Internal(internal) => Box::new(InternalNodeIter::new(internal)),
+                };
+
+                self.current_child_iter = Some(iter);
+            }
+
+            self.child_idx += 1;
+        }
+    }
 }

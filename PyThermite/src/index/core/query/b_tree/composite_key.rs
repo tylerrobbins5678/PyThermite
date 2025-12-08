@@ -86,7 +86,7 @@ impl CompositeKey128 {
 
     }
 
-    fn decode_float96(encoded: u128) -> f64 {
+    pub fn decode_float96(encoded: u128) -> f64 {
         let mut key = encoded & ((1u128 << 96)-1);
 
         if key == 1u128 << 95 { return 0.0; }
@@ -139,6 +139,10 @@ impl CompositeKey128 {
 
     pub fn get_id(&self) -> u32 {
         (self.raw & 0xFFFF_FFFF) as u32
+    }
+
+    pub fn get_value_bits(&self) -> u128 {
+        self.raw >> 32
     }
 
     pub fn get_key(&self) -> u128 {

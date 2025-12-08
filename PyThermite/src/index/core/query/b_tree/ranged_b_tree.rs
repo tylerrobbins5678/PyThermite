@@ -1,7 +1,7 @@
 use std::ops::Bound;
 use croaring::Bitmap;
 
-use crate::index::core::query::b_tree::{Key, composite_key::CompositeKey128, nodes::{InternalNode, LeafNode}};
+use crate::index::core::query::b_tree::{Key, composite_key::CompositeKey128, nodes::{InternalNode, InternalNodeIter, LeafNode, LeafNodeIter}};
 
 pub const MAX_KEYS: usize = 96;
 pub const FILL_FACTOR: f64 = 0.97;
@@ -267,23 +267,34 @@ impl BitMapBTreeNode {
     }
 }
 
-// 
-// pub struct BitMapBTreeNodeIter<'a> {
-//     node: &'a BitMapBTreeNode,
-//     idx: usize,
-// }
-// 
-// impl<'a> Iterator for BitMapBTreeNodeIter<'a> {
-//     type Item = (u128, &'a Bitmap); // numeric key, bitmap of object IDs
-// 
-//     fn next(&mut self) -> Option<Self::Item> {
-//         if self.idx >= self.node.num_keys {
-//             None
-//         } else {
-//             let key = self.node.keys[self.idx].raw & NUMERIC_MASK; // group key
-//             let bitmap = self.node.children_bitmaps[self.idx].as_ref().unwrap();
-//             self.idx += 1;
-//             Some((key, bitmap))
-//         }
-//     }
-// }
+pub struct BitMapBTreeIter<'a> {
+    inner: BitMapBTreeNodeIter<'a>,
+}
+
+pub enum BitMapBTreeNodeIter<'a> {
+    Leaf(LeafNodeIter<'a>),
+    Internal(InternalNodeIter<'a>),
+}
+
+impl<'a> BitMapBTreeIter<'a> {
+    pub fn new(tree: &'a BitMapBTree) -> Self {
+        let inner = match tree.root.as_ref() {
+            BitMapBTreeNode::Leaf(leaf) => BitMapBTreeNodeIter::Leaf(LeafNodeIter::new(leaf)),
+            BitMapBTreeNode::Internal(internal) => BitMapBTreeNodeIter::Internal(InternalNodeIter::new(internal)),
+        };
+
+        Self { inner }
+    }
+}
+
+
+impl<'a> Iterator for BitMapBTreeIter<'a> {
+    type Item = CompositeKey128;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match &mut self.inner {
+            BitMapBTreeNodeIter::Leaf(iter) => iter.next(),
+            BitMapBTreeNodeIter::Internal(iter) => iter.next(),
+        }
+    }
+}

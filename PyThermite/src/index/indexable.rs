@@ -123,7 +123,7 @@ impl Indexable{
         };
         let py_values = rust_self.get_py_values();
         if let Some(value) = py_values.get(name_str) {
-            Ok(value.get_obj().clone_ref(py))
+            Ok(value.get_obj(py))
         } else {
 
             let res = unsafe { ffi::PyObject_GenericGetAttr(self_.into_ptr(), name.into_ptr()) };

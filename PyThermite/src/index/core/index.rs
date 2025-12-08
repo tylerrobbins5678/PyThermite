@@ -267,7 +267,7 @@ impl IndexAPI{
         let (first_attr, _) = attr_parts(attr.clone());
 
         if let Some(attr_map) = index.get(&first_attr){
-            attr_map.group_by(Some(attr))
+            attr_map.group_by(attr)
         } else {
             None
         }

@@ -202,3 +202,30 @@ impl LeafNode {
     }
 
 }
+
+
+pub struct LeafNodeIter<'a> {
+    leaf: &'a LeafNode,
+    idx: usize,  // position within the keys
+}
+
+impl<'a> LeafNodeIter<'a> {
+    pub fn new(leaf: &'a LeafNode) -> Self {
+        Self { leaf, idx: 0 }
+    }
+}
+
+impl<'a> Iterator for LeafNodeIter<'a> {
+    type Item = CompositeKey128; // key + object ID
+
+    fn next(&mut self) -> Option<Self::Item> {
+
+        if self.idx >= self.leaf.num_keys {
+            return None;
+        }
+        let ck = self.leaf.keys[self.leaf.offset..self.leaf.offset + self.leaf.num_keys][self.idx];
+        self.idx += 1;
+
+        Some(ck)
+    }
+}
