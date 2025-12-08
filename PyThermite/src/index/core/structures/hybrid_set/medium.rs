@@ -56,12 +56,12 @@ impl Medium{
 
     pub fn and_inplace_small(mut self, other: &Small) -> HybridSet {
         self.data.and_with(&other.data);
-        HybridSet::Medium(self)
+        HybridSet::Medium(Box::new(self))
     }
 
     pub fn and_inplace_medium(mut self, other: &Medium) -> HybridSet {
         self.data.and_with(&other.data);
-        HybridSet::Medium(self)
+        HybridSet::Medium(Box::new(self))
     }
 
     pub fn and_inplace_large(mut self, other: &Bitmap) -> HybridSet{
@@ -78,14 +78,14 @@ impl Medium{
         self.data = CenteredArray::consuming_sorted_slice(
             new_data,
         );
-        HybridSet::Medium(self)
+        HybridSet::Medium(Box::new(self))
 
     }
 
     pub fn or_inplace_small(mut self, other: &Small) -> HybridSet {
         if self.data.len() + other.len() <= MED_LIMIT {
             self.data.union_with(&other.data);
-            HybridSet::Medium(self)
+            HybridSet::Medium(Box::new(self))
         } else {
             let mut new_bmp = Bitmap::of(self.as_slice());
             new_bmp.add_many(other.as_slice());
@@ -97,7 +97,7 @@ impl Medium{
         if self.data.len() + other.data.len() <= MED_LIMIT {
             // assumes other is sorted already
             self.data.union_with(&other.data);
-            HybridSet::Medium(self)
+            HybridSet::Medium(Box::new(self))
         } else {
             let mut new_bmp = Bitmap::of(self.as_slice());
             new_bmp.add_many(other.as_slice());

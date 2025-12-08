@@ -1,7 +1,8 @@
-use pyo3::{prelude::*, PyTypeInfo};
+use pyo3::{IntoPyObjectExt, PyTypeInfo, prelude::*};
 use pyo3::types::{PyAny, PyDict, PyList, PySet, PyTuple};
 use std::sync::Arc;
 use std::{hash::{Hash, Hasher}};
+use pyo3::conversion::IntoPyObject;
 
 use crate::index::{types, Indexable};
 
@@ -38,7 +39,7 @@ pub enum RustCastValue {
 
 #[derive(Debug)]
 pub struct PyValue {
-    obj: Arc<Py<PyAny>>,
+    obj: Option<Arc<Py<PyAny>>>,
     primitave: RustCastValue,
     hash: u64,
 }
@@ -75,8 +76,41 @@ impl PyValue {
         };
 
         Self {
-            obj: Arc::new(obj.into()),
+            obj: Some(Arc::new(obj.into())),
             primitave,
+            hash,
+        }
+    }
+
+    pub fn from_primitave(prim: RustCastValue) -> Self {
+        let hash = match &prim {
+            RustCastValue::Int(v) => {
+                let mut s = std::collections::hash_map::DefaultHasher::new();
+                v.hash(&mut s);
+                s.finish()
+            },
+            RustCastValue::Float(v) => {
+                let mut s = std::collections::hash_map::DefaultHasher::new();
+                // convert f64 to bits for stable hashing
+                v.to_bits().hash(&mut s);
+                s.finish()
+            },
+            RustCastValue::Str(s) => {
+                let mut s_hasher = std::collections::hash_map::DefaultHasher::new();
+                s.hash(&mut s_hasher);
+                s_hasher.finish()
+            },
+            RustCastValue::Iterable(_) |
+            RustCastValue::Ind(_) |
+            RustCastValue::Unknown => {
+                // fallback hash for other types, may adjust
+                0
+            }
+        };
+
+        Self {
+            obj: None,
+            primitave: prim,
             hash,
         }
     }
@@ -104,8 +138,12 @@ impl PyValue {
         &self.primitave
     }
 
-    pub fn get_obj(&self) -> &Py<PyAny> {
-        &self.obj
+    pub fn get_obj(&self, py: Python) -> Py<PyAny> {
+        match self.primitave {
+            RustCastValue::Int(v) => v.into_py_any(py).unwrap(),
+            RustCastValue::Float(v) => v.into_py_any(py).unwrap(),
+            _ => self.obj.clone().unwrap().clone_ref(py)
+        }
     }
 }
 
@@ -139,6 +177,6 @@ impl<'py> IntoPyObject<'py> for PyValue {
     type Error = std::convert::Infallible;
 
     fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
-        Ok(self.obj.clone_ref(py).into_bound(py))
+        Ok(self.get_obj(py).into_bound(py))
     }
 }

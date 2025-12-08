@@ -94,7 +94,7 @@ impl Small{
             let mut arr = CenteredArray::<MED_LIMIT>::new();
             arr.union_with(&other.data);
             HybridSet::Medium(
-                Medium { data: arr }
+                Box::new(Medium { data: arr })
             )
         } else {
             let mut new_bmp = Bitmap::of(self.as_slice());
@@ -109,7 +109,7 @@ impl Small{
             let mut arr = CenteredArray::<MED_LIMIT>::new();
             arr.union_with(&other.data);
             HybridSet::Medium(
-                Medium { data: arr }
+                Box::new(Medium { data: arr })
             )
         } else {
             let mut new_bmp = Bitmap::of(self.as_slice());

@@ -5,14 +5,14 @@ use croaring::bitmap::BitmapIterator;
 
 use crate::index::core::structures::hybrid_set::{small::Small, medium::Medium};
 
-pub const SMALL_LIMIT: usize = 8;
-pub const MED_LIMIT: usize = 8;
+pub const SMALL_LIMIT: usize = 4;
+pub const MED_LIMIT: usize = 4;
 
 #[derive(Clone, Debug)]
 pub enum HybridSet {
     Empty,
     Small(Small),   // stack
-    Medium(Medium), // stack - sorted
+    Medium(Box<Medium>), // stack - sorted
     Large(Bitmap),  // heap
 }
 
@@ -230,7 +230,7 @@ impl HybridSetOps for HybridSet {
         if items.len() < SMALL_LIMIT {
             HybridSet::Small( Small::of(items) )
         } else if items.len() < MED_LIMIT {
-            HybridSet::Medium( Medium::of(items) )
+            HybridSet::Medium( Box::new(Medium::of(items)) )
         } else {
             HybridSet::Large( Bitmap::of(items) )
         }

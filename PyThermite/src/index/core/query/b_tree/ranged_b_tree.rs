@@ -1,9 +1,9 @@
 use std::ops::Bound;
 use croaring::Bitmap;
 
-use crate::index::core::query::b_tree::{Key, composite_key::CompositeKey128, nodes::{InternalNode, LeafNode}};
+use crate::index::core::query::b_tree::{Key, composite_key::CompositeKey128, nodes::{InternalNode, InternalNodeIter, LeafNode, LeafNodeIter}};
 
-pub const MAX_KEYS: usize = 128;
+pub const MAX_KEYS: usize = 96;
 pub const FILL_FACTOR: f64 = 0.97;
 pub const FULL_KEYS: usize = (MAX_KEYS as f64 * FILL_FACTOR) as usize;
 
@@ -22,7 +22,7 @@ pub struct BitMapBTree {
 impl BitMapBTree {
     pub fn new() -> Self {
         Self {
-            root: Box::new(BitMapBTreeNode::Leaf(LeafNode::new())),
+            root: Box::new(BitMapBTreeNode::Leaf(Box::new(LeafNode::new()))),
         }
     }
 
@@ -40,7 +40,7 @@ impl BitMapBTree {
 
     fn split_root(&mut self) {
         // Extract the current root node
-        let old_root = std::mem::replace(&mut self.root, Box::new(BitMapBTreeNode::Leaf(LeafNode::new())));
+        let old_root = std::mem::replace(&mut self.root, Box::new(BitMapBTreeNode::Leaf(Box::new(LeafNode::new()))));
         let base_index = MAX_KEYS / 2;
 
         match *old_root {
@@ -53,12 +53,12 @@ impl BitMapBTree {
                 let mut new_root = InternalNode::new();
 
                 // Insert separator key
-                new_root.keys[base_index] = Some(left_leaf.least_key());
-                new_root.keys[base_index + 1] = Some(sep_key.clone());
+                new_root.keys[base_index] = left_leaf.least_key();
+                new_root.keys[base_index + 1] = sep_key;
 
                 // Insert the two children
                 new_root.children[base_index] = Some(Box::new(BitMapBTreeNode::Leaf(left_leaf)));
-                new_root.children[base_index + 1] = Some(Box::new(BitMapBTreeNode::Leaf(right_leaf)));
+                new_root.children[base_index + 1] = Some(Box::new(BitMapBTreeNode::Leaf(Box::new(right_leaf))));
 
                 // Initialize children bitmaps
                 new_root.children_bitmaps[base_index] = new_root.children[base_index].as_ref().map(|child| child.get_bitmap());
@@ -67,7 +67,7 @@ impl BitMapBTree {
                 new_root.num_keys = 2;
                 new_root.offset = base_index;
 
-                self.root = Box::new(BitMapBTreeNode::Internal(new_root));
+                self.root = Box::new(BitMapBTreeNode::Internal(Box::new(new_root)));
             }
 
             BitMapBTreeNode::Internal(mut internal) => {
@@ -77,11 +77,11 @@ impl BitMapBTree {
 
                 let mut new_root = InternalNode::new();
 
-                new_root.keys[base_index] = Some(left_internal.least_key());
-                new_root.keys[base_index + 1] = Some(sep_key.clone());
+                new_root.keys[base_index] = left_internal.least_key();
+                new_root.keys[base_index + 1] = sep_key;
 
                 new_root.children[base_index] = Some(Box::new(BitMapBTreeNode::Internal(left_internal)));
-                new_root.children[base_index + 1] = Some(Box::new(BitMapBTreeNode::Internal(right_internal)));
+                new_root.children[base_index + 1] = Some(Box::new(BitMapBTreeNode::Internal(Box::new(right_internal))));
 
                 new_root.children_bitmaps[base_index] = new_root.children[base_index].as_ref().map(|child| child.get_bitmap());
                 new_root.children_bitmaps[base_index + 1] = new_root.children[base_index + 1].as_ref().map(|child| child.get_bitmap());
@@ -89,7 +89,7 @@ impl BitMapBTree {
                 new_root.num_keys = 2;
                 new_root.offset = base_index;
 
-                self.root = Box::new(BitMapBTreeNode::Internal(new_root));
+                self.root = Box::new(BitMapBTreeNode::Internal(Box::new(new_root)));
             }
         }
     }
@@ -120,8 +120,8 @@ impl Default for BitMapBTree {
 
 #[derive(Debug, Clone)]
 pub enum BitMapBTreeNode {
-    Internal(InternalNode),
-    Leaf(LeafNode),
+    Internal(Box<InternalNode>),
+    Leaf(Box<LeafNode>),
 }
 
 impl BitMapBTreeNode {
@@ -190,13 +190,12 @@ impl BitMapBTreeNode {
             BitMapBTreeNode::Leaf(leaf) => {
                 // println!("{pad}📄 Leaf (offset: {}, keys: {}):", leaf.offset, leaf.num_keys);
                 for i in leaf.offset..leaf.offset + leaf.num_keys {
-                    if let Some(key) = &leaf.keys[i] {
-                        // Check if key is in range
-                        if (lower.is_none() || key >= lower.unwrap())
-                            && (upper.is_none() || key <= upper.unwrap())
-                        {
-                            println!("{pad}  *[{i}] = {:?}", key);
-                        }
+                    let key = &leaf.keys[i];
+                    // Check if key is in range
+                    if (lower.is_none() || key >= lower.unwrap())
+                        && (upper.is_none() || key <= upper.unwrap())
+                    {
+                        println!("{pad}  *[{i}] = {:?}", key);
                     }
                 }
             }
@@ -206,12 +205,11 @@ impl BitMapBTreeNode {
 
                 // Print keys within range
                 for i in internal.offset..internal.offset + internal.num_keys {
-                    if let Some(key) = &internal.keys[i] {
-                        if (lower.is_none() || key >= lower.unwrap())
-                            && (upper.is_none() || key <= upper.unwrap())
-                        {
-                            println!("{pad}  *Key[{i}] = {:?}", key);
-                        }
+                    let key = &internal.keys[i];
+                    if (lower.is_none() || key >= lower.unwrap())
+                        && (upper.is_none() || key <= upper.unwrap())
+                    {
+                        println!("{pad}  *Key[{i}] = {:?}", key);
                     }
                 }
 
@@ -238,7 +236,8 @@ impl BitMapBTreeNode {
                 println!("{pad}📄 Leaf (offset: {}, keys: {}):", leaf.offset, leaf.num_keys);
                 for i in 0..MAX_KEYS {
                     let mark = if i >= leaf.offset && i < leaf.offset + leaf.num_keys { "*" } else { " " };
-                    if let Some(key) = &leaf.keys[i] {
+                    let key = &leaf.keys[i];
+                    if *key != CompositeKey128::default() {
                         println!("{pad}  {mark}[{i}] = {:?}", key);
                     } else {
                         println!("{pad}   [{i}] = <empty>");
@@ -249,7 +248,8 @@ impl BitMapBTreeNode {
                 println!("{pad}🧭 Internal (offset: {}, keys: {}):", internal.offset, internal.num_keys);
                 for i in 0..MAX_KEYS {
                     let mark = if i >= internal.offset && i < internal.offset + internal.num_keys { "*" } else { " " };
-                    if let Some(key) = &internal.keys[i] {
+                    let key = &internal.keys[i];
+                    if *key != CompositeKey128::default() {
                         println!("{pad}  {mark}Key[{i}] = {:?}", key);
                     } else {
                         println!("{pad}   Key[{i}] = <empty>");
@@ -263,6 +263,38 @@ impl BitMapBTreeNode {
                     }
                 }
             }
+        }
+    }
+}
+
+pub struct BitMapBTreeIter<'a> {
+    inner: BitMapBTreeNodeIter<'a>,
+}
+
+pub enum BitMapBTreeNodeIter<'a> {
+    Leaf(LeafNodeIter<'a>),
+    Internal(InternalNodeIter<'a>),
+}
+
+impl<'a> BitMapBTreeIter<'a> {
+    pub fn new(tree: &'a BitMapBTree) -> Self {
+        let inner = match tree.root.as_ref() {
+            BitMapBTreeNode::Leaf(leaf) => BitMapBTreeNodeIter::Leaf(LeafNodeIter::new(leaf)),
+            BitMapBTreeNode::Internal(internal) => BitMapBTreeNodeIter::Internal(InternalNodeIter::new(internal)),
+        };
+
+        Self { inner }
+    }
+}
+
+
+impl<'a> Iterator for BitMapBTreeIter<'a> {
+    type Item = CompositeKey128;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match &mut self.inner {
+            BitMapBTreeNodeIter::Leaf(iter) => iter.next(),
+            BitMapBTreeNodeIter::Internal(iter) => iter.next(),
         }
     }
 }
