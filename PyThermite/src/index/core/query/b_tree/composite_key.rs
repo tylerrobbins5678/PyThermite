@@ -3,15 +3,20 @@ use ordered_float::OrderedFloat;
 
 use crate::index::core::query::b_tree::Key;
 
-const EXPONENT_BIAS: u16 = 16383;
-const NUMERIC_MASK: u128 = !0u128 << 76; // Upper 76 bits
 
 
-const EXPONENT_SHIFT: u16 = 11;
-const MANTISSA_SHIFT: u16 = 63;
+const EXPONENT_BITS: u16 = 11;     // 11-bit exponent
+const MANTISSA_BITS: u16 = 64;     // 64-bit mantissa
+const SIGN_BIT_POS: u16 = 75;      // 76-bit total, sign is top bit
 
-const FLOAT_LENGTH: u16 = 76;
-const FLOAT_SHIFT: u16 = 128 - FLOAT_LENGTH;
+const FLOAT_LENGTH: u16 = EXPONENT_BITS + MANTISSA_BITS + 1; // 1 for sign
+const FLOAT_SHIFT: u16 = 128 - FLOAT_LENGTH; // for packing into 128-bit
+
+const EXPONENT_BIAS: u16 = (1 << (EXPONENT_BITS - 1)) - 1;
+const NUMERIC_MASK: u128 = ((1u128 << FLOAT_LENGTH) - 1) << (128 - FLOAT_LENGTH);
+
+const ID_MASK: u128 = (1u128 << (128 - FLOAT_LENGTH)) - 1;
+
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct CompositeKey128 {
@@ -40,125 +45,133 @@ impl CompositeKey128 {
     fn encode_f64_to_float76(val: OrderedFloat<f64>) -> u128 {
 
         if val.0 == 0.0 {
-            return 1u128 << FLOAT_SHIFT - 1;
+            return 1u128 << SIGN_BIT_POS;
         }
 
         let bits = val.to_bits();
         let sign = (bits >> 63) & 1;
-        let ieee_exponent = ((bits >> 52) & 0x7FF) as i32;
-        let ieee_mantissa = bits & 0x000F_FFFF_FFFF_FFFF;
+        let ieee_exp = ((bits >> 52) & 0x7FF) as i32;
+        let ieee_mant = bits & 0x000F_FFFF_FFFF_FFFF;
 
-        let (exp, mantissa) = if ieee_exponent == 0 {
-            // Subnormal: normalize mantissa manually
-            let leading = ieee_mantissa.leading_zeros() - 12; // 64 - 52
+        let (exp, mantissa) = if ieee_exp == 0 {
+            // subnormal
+            let leading = ieee_mant.leading_zeros() - 12;
             let shift = leading + 1;
-            let norm_mantissa = ieee_mantissa << shift;
+            let norm_mant = ieee_mant << shift;
             let exponent = -1022 - (shift as i32) + 1 + (EXPONENT_BIAS as i32);
-            (exponent as u16, (norm_mantissa as u128) << (80 - 52))
+            (exponent as u16, (norm_mant as u128) << (MANTISSA_BITS - 52))
         } else {
-            // Normal: add implicit 1 and shift left to 80-bit alignment
-            let exponent = ieee_exponent - 1023 + EXPONENT_BIAS as i32;
-            let mantissa_53 = (1u64 << 52) | ieee_mantissa;
-            let mantissa = (mantissa_53 as u128) << (80 - 53);
+            let exponent = ieee_exp - 1023 + EXPONENT_BIAS as i32;
+            let mant_53 = (1u64 << 52) | ieee_mant;
+            let mantissa = (mant_53 as u128) << (MANTISSA_BITS - 53);
             (exponent as u16, mantissa)
         };
 
-        let mut key_bits = ((sign as u128) << 95) | ((exp as u128) << 80) | (mantissa & ((1u128 << 80) - 1)  as u128 );
-        // println!("key: {:?}, encoded: {:0128b}", *val, key_bits << 32);
+        let mut key_bits = ((sign as u128) << SIGN_BIT_POS)
+            | ((exp as u128) << MANTISSA_BITS)
+            | (mantissa & ((1u128 << MANTISSA_BITS) - 1));
+
         if sign == 1 {
             key_bits = !key_bits;
         } else {
-            key_bits |= 1u128 << 95; // force sign bit to 1 for proper unsigned sorting
+            key_bits |= 1u128 << SIGN_BIT_POS;
         }
-        key_bits
 
+        key_bits
     }
 
     fn encode_i64_to_float76(n: i64) -> u128 {
         if n == 0 {
-            return 1u128 << 95;
+            return 1u128 << SIGN_BIT_POS; // special zero encoding
         }
 
         let sign = if n < 0 { 1u128 } else { 0 };
         let abs = n.unsigned_abs();
 
-        let leading = 63 - abs.leading_zeros(); // log2(n)
+        let leading = 63 - abs.leading_zeros(); // floor(log2(n))
         let exponent = EXPONENT_BIAS + leading as u16;
 
-        let mantissa = (abs as u128) << (80 - leading - 1); // Normalize to 1.x...
+        let mantissa = (abs as u128) << (MANTISSA_BITS as u32 - leading - 1); // normalize to 1.x...
 
-        let mut key_bits = (sign << 95) | ((exponent as u128) << 80) | (mantissa & ((1u128 << 80) - 1));
-        // println!("key: {:?}, encoded: {:0128b}", n, key_bits << 32);
+        let mut key_bits = (sign << SIGN_BIT_POS) | ((exponent as u128) << MANTISSA_BITS) | (mantissa & ((1u128 << MANTISSA_BITS)-1));
+
+        // Ordering transform
         if sign == 1 {
             key_bits = !key_bits;
         } else {
-            key_bits |= 1u128 << 95; // force sign bit to 1 for proper unsigned sorting
+            key_bits |= 1u128 << SIGN_BIT_POS; // force positive sign bit
         }
+
         key_bits
 
     }
 
-    pub fn decode_float(encoded: u128) -> f64 {
-        let mut key = encoded & ((1u128 << 96)-1);
+    pub fn decode_float(&self) -> f64 {
+        let mut key = self.get_value_bits() & ((1u128 << FLOAT_LENGTH)-1);
 
-        if key == 1u128 << 95 { return 0.0; }
+        if key == (1u128 << SIGN_BIT_POS) {
+            return 0.0;
+        }
 
-        let is_neg = (key >> 95) & 1 == 0;
+        let is_neg = (key >> SIGN_BIT_POS) & 1 == 0;
         if is_neg { key = !key; }
 
-        let exp = ((key >> 80) & 0x7FFF) as i32;
-        let mant = key & ((1u128 << 80)-1);
+        let exp = ((key >> MANTISSA_BITS) & ((1u128 << EXPONENT_BITS)-1)) as i32;
+        let mant = key & ((1u128 << MANTISSA_BITS)-1);
 
         let ieee_exp: i32;
         let ieee_mant: u64;
 
         if exp == 0 {
             ieee_exp = 0;
-            ieee_mant = (mant >> (80-52)) as u64;
+            ieee_mant = (mant >> (MANTISSA_BITS - 52)) as u64;
         } else {
             ieee_exp = exp - EXPONENT_BIAS as i32 + 1023;
-            ieee_mant = ((mant >> (80-53)) as u64) & ((1<<52)-1);
+            ieee_mant = ((mant >> (MANTISSA_BITS - 53)) as u64) & ((1<<52)-1);
         }
 
         let bits = ((is_neg as u64) << 63) | ((ieee_exp as u64) << 52) | ieee_mant;
         f64::from_bits(bits)
     }
 
-    fn decode_i64(encoded: u128) -> i64 {
+    pub fn decode_i64(encoded: u128) -> i64 {
 
-        // Zero encoding: exponent=mantissa=0, sign bit forced to 1
-        if encoded == (1u128 << 95) {
+        if encoded == (1u128 << SIGN_BIT_POS) {
             return 0;
         }
 
-        // Determine if it was originally negative (only negatives have sign=0)
-        let was_negative = ((encoded >> 95) & 1) == 0;
+        // Determine if negative
+        let was_neg = ((encoded >> SIGN_BIT_POS) & 1) == 0;
 
-        // Undo inversion for negatives
-        let restored = if was_negative { !encoded } else { encoded };
+        // Undo inversion
+        let restored = if was_neg { !encoded } else { encoded };
 
-        let exponent = ((restored >> 80) & 0x7FFF) as i64;
-        let mantissa = restored & ((1u128 << 80) - 1);
+        let exponent = ((restored >> MANTISSA_BITS) & ((1u128 << EXPONENT_BITS)-1)) as i64;
+        let mantissa = restored & ((1u128 << MANTISSA_BITS)-1);
 
         let leading = exponent - EXPONENT_BIAS as i64;
-        let shift_back = 80 - leading - 1;
+        let shift_back = MANTISSA_BITS as i64 - leading - 1;
 
-        // SAFETY: shift_back is now always 0..79
         let abs = (mantissa >> shift_back) as i64;
 
-        if was_negative { -abs } else { abs }
+        if was_neg { -abs } else { abs }
     }
 
     pub fn get_id(&self) -> u32 {
-        (self.raw & 0xFFFF_FFFF) as u32
+        // (self.raw & 0xFFFF_FFFF) as u32
+        (self.raw & ID_MASK) as u32
     }
 
     pub fn get_value_bits(&self) -> u128 {
-        self.raw >> 32
+        self.raw >> (128 - FLOAT_LENGTH)
     }
 
     pub fn get_key(&self) -> u128 {
         self.raw
+    }
+
+    pub fn is_float(&self) -> bool {
+        true
     }
 
     pub fn cmp_key(&self, key: &Key) -> std::cmp::Ordering {
@@ -167,7 +180,7 @@ impl CompositeKey128 {
             Key::FloatOrdered(float) => Self::encode_f64_to_float76(*float),
         };
 
-        let target_raw = key_bits << 32;
+        let target_raw = key_bits << FLOAT_SHIFT;
         (self.raw & NUMERIC_MASK).cmp(&(target_raw & NUMERIC_MASK))
         // self.raw.cmp(&target_raw)
     }
@@ -226,9 +239,8 @@ mod tests {
         ];
 
         for &val in &values {
-            let ordered = OrderedFloat(val);
-            let key_bits = CompositeKey128::encode_f64_to_float76(ordered);
-            let decoded = CompositeKey128::decode_float(key_bits);
+            let composite = CompositeKey128::new(Key::FloatOrdered(OrderedFloat(val)), 0);
+            let decoded = composite.decode_float();
             println!("input  : {:064b}", val.to_bits());
             println!("decoded: {:064b}", decoded.to_bits());
             assert!(
@@ -245,11 +257,11 @@ mod tests {
         let values = [0, 1, -1, 42, -42, -2^53 + 1, 2^53 - 1];
 
         for &val in &values {
-            let key_bits = CompositeKey128::encode_i64_to_float76(val);
+            let composite = CompositeKey128::new(Key::Int(val), 0);
             // Decode using the float decoder
-            let decoded = CompositeKey128::decode_float(key_bits);
+            let decoded = composite.decode_float();
             // integers will be exactly representable as f64
-            println!("raw    : {:128b}", key_bits);
+            println!("raw    : {:128b}", composite.get_key());
             println!("input  : {:064b}", (val as f64).to_bits());
             println!("decoded: {:064b}", decoded.to_bits());
             assert!(

@@ -344,29 +344,25 @@ impl<'a> Iterator for InternalNodeIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            // If we have a current child iterator, try to advance it
+            // 1) Yield from current child
             if let Some(iter) = &mut self.current_child_iter {
-                if let Some(key) = iter.next() {
-                    return Some(key);
-                } else {
-                    // exhausted this child → drop it
-                    self.current_child_iter = None;
+                if let Some(item) = iter.next() {
+                    return Some(item);
                 }
+                self.current_child_iter = None;
             }
 
-            // Move to the next child
-            if self.child_idx >= self.node.num_keys {
-                return None; // all children done
+            // 2) If no more children, stop
+            if self.child_idx > self.node.num_keys {
+                return None;
             }
 
-            if let Some(child) = &self.node.children[self.child_idx] {
-                // Create iterator for child
-                let iter: Box<dyn Iterator<Item = CompositeKey128> + 'a> = match child.as_ref() {
-                    BitMapBTreeNode::Leaf(leaf) => Box::new(LeafNodeIter::new(leaf)),
-                    BitMapBTreeNode::Internal(internal) => Box::new(InternalNodeIter::new(internal)),
-                };
-
-                self.current_child_iter = Some(iter);
+            // 3) Create iterator for next valid child
+            if let Some(child) = &self.node.children[self.node.offset + self.child_idx] {
+                self.current_child_iter = Some(match child.as_ref() {
+                    BitMapBTreeNode::Leaf(l) => Box::new(LeafNodeIter::new(l)),
+                    BitMapBTreeNode::Internal(n) => Box::new(InternalNodeIter::new(n)),
+                });
             }
 
             self.child_idx += 1;
