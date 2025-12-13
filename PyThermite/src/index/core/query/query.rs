@@ -291,30 +291,30 @@ impl QueryMap {
                 let iter_guard = &self.read_num_ordered();
                 let bitmap_iter = BitMapBTreeIter::new(iter_guard);
 
-                let mut current_val: Option<u128> = None;
+                let mut current_val: Option<CompositeKey128> = None;
                 let mut current_bitmap: Bitmap = Bitmap::new();
 
                 for composite_key in bitmap_iter {
                     let id = composite_key.get_id();
-                    let key_val = composite_key.get_value_bits();
 
-                    if Some(key_val) != current_val {
-                        // push previous group if exists
-                        if let Some(cv) = current_val {
-                            let pyval = PyValue::from_primitave(RustCastValue::Float(CompositeKey128::decode_float96(cv)));
+                    if let Some(prev_ck) = current_val {
+                        if prev_ck.get_value_bits() != composite_key.get_value_bits() {
+                            // Flush previous group
+                            let pyval = PyValue::from_primitave(RustCastValue::Float(prev_ck.decode_float()));
                             let hset = HybridSet::Large(current_bitmap.clone());
                             res.push((pyval, hset));
                             current_bitmap.clear();
                         }
-                        current_val = Some(key_val);
                     }
 
+                    // Update current value and accumulate IDs
+                    current_val = Some(composite_key);
                     current_bitmap.add(id);
                 }
 
                 // push last group
                 if let Some(cv) = current_val {
-                    let pyval = PyValue::from_primitave(RustCastValue::Float(CompositeKey128::decode_float96(cv)));
+                    let pyval = PyValue::from_primitave(RustCastValue::Float(cv.decode_float()));
                     let hset = HybridSet::Large(current_bitmap);
                     res.push((pyval, hset));
                 }

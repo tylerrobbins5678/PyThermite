@@ -91,7 +91,7 @@ def test_group_by_many_to_many(index: Index):
         assert ind.nested[0].idx == 100
 
 def test_group_by_one_to_many_deregister(index: Index):
-    nested = TestClass(nest=True)
+    nested = TestClass(nest=True, num = 100)
     for i in range(10):
         index.add_object(TestClass(id=i, nested=nested))
 
@@ -105,6 +105,10 @@ def test_group_by_one_to_many_deregister(index: Index):
     grouped = index.group_by("nested.nest")
 
     all = grouped[True].collect()
+    assert len(all) == 9
+
+    grouped = index.group_by("nested.num")
+    all = grouped[100].collect()
     assert len(all) == 9
 
 def test_remove_and_reassign_tracked_list(index: Index):
@@ -135,3 +139,16 @@ def test_remove_and_reassign_tracked_list(index: Index):
     grouped_after_mutation = index.group_by("nested.num")
     first_group = grouped_after_mutation[999].collect()
     assert all(o.nested[0].num == 999 for o in first_group)
+
+def test_nested_group_by_many_to_many(index: Index):
+    children = [TestClass(num=i) for i in range(1000)]
+
+    for c in children:
+        c.child = [TestClass(nested_num=i) for i in range(3)]
+
+    index.add_object_many(children)
+
+    groups = index.group_by("child.nested_num")
+
+    for i in range(3):
+        assert len(groups[i].collect()) == 1000, f"{i} has invalid length"

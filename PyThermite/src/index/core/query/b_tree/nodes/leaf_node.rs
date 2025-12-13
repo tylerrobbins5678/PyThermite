@@ -223,7 +223,7 @@ impl<'a> Iterator for LeafNodeIter<'a> {
         if self.idx >= self.leaf.num_keys {
             return None;
         }
-        let ck = self.leaf.keys[self.leaf.offset..self.leaf.offset + self.leaf.num_keys][self.idx];
+        let ck = self.leaf.keys[self.leaf.offset + self.idx];
         self.idx += 1;
 
         Some(ck)

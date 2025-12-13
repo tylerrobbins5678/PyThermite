@@ -298,3 +298,61 @@ impl<'a> Iterator for BitMapBTreeIter<'a> {
         }
     }
 }
+
+
+
+
+#[test]
+fn test_btree_iter_after_large_inserts() {
+    use crate::index::core::query::b_tree::BitMapBTree;
+    use crate::index::core::query::b_tree::Key;
+
+    let mut tree = BitMapBTree::new();
+
+    // ---- Insert 1000 x key=0 ----
+    for i in 0..1000 {
+        tree.insert(Key::Int(0), i);
+    }
+
+    // ---- Insert 1000 x key=1 ----
+    for i in 1000..2000 {
+        tree.insert(Key::Int(1), i);
+    }
+
+    // ---- Insert 1000 x key=50 ----
+    for i in 2000..3000 {
+        tree.insert(Key::Int(50), i);
+    }
+
+    // ---- Iterate ----
+    let iter = BitMapBTreeIter::new(&tree);
+    let items: Vec<_> = iter.collect();
+
+    assert_eq!(items.len(), 3000, "Iterator did not yield all items!");
+
+    // Extract just the Key::Int values
+    let values: Vec<f64> = items
+        .iter()
+        .map(|ck: &CompositeKey128| ck.decode_float())
+        .collect();
+
+    // ---- Check correct ordering ----
+    // Should be:
+    // 0 repeated 1000 times,
+    // 1 repeated 1000 times,
+    // 50 repeated 1000 times.
+
+    assert_eq!(values[0], 0.0);
+    assert_eq!(values[999], 0.0);
+
+    assert_eq!(values[1000], 1.0);
+    assert_eq!(values[1999], 1.0);
+
+    assert_eq!(values[2000], 50.0);
+    assert_eq!(values[2999], 50.0);
+
+    // Multiplicity check
+    assert_eq!(values.iter().filter(|v| **v == 0.0).count(), 1000);
+    assert_eq!(values.iter().filter(|v| **v == 1.0).count(), 1000);
+    assert_eq!(values.iter().filter(|v| **v == 50.0).count(), 1000);
+}
