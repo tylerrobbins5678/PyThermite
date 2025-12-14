@@ -16,13 +16,14 @@ const EXPONENT_BIAS: u16 = (1 << (EXPONENT_BITS - 1)) - 1;
 const NUMERIC_MASK: u128 = ((1u128 << FLOAT_LENGTH) - 1) << (128 - FLOAT_LENGTH);
 
 const ID_MASK: u128 = (1u128 << (128 - FLOAT_LENGTH)) - 1;
+const TYPE_BIT_POS: u16 = 32;
 
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct CompositeKey128 {
     raw: u128, // Packed representation
 
-    // [f76][u1][u32]
+    // [f76][<padding>][u1][u32]
     // f76 - 76 bit floating point number
     // bool - type - float => true / int => false
     // u32 - ID attached to said number
@@ -31,14 +32,13 @@ pub struct CompositeKey128 {
 impl CompositeKey128 {
     /// Constructs a CompositeKey128 from an f64 and u32 ID.
     pub fn new(value: Key, id: u32) -> Self {
-        let float_bits = match value {
-            Key::Int(int) => Self::encode_i64_to_float76(int),
-            Key::FloatOrdered(float) => Self::encode_f64_to_float76(float),
+        let (float_bits, type_bit) = match value {
+            Key::Int(int) => (Self::encode_i64_to_float76(int), 0u128),
+            Key::FloatOrdered(float) => (Self::encode_f64_to_float76(float), 1u128),
         };
-        let packed = (float_bits << FLOAT_SHIFT) | (id as u128);
 
         Self {
-            raw: packed,
+            raw: (float_bits << FLOAT_SHIFT) | (type_bit << TYPE_BIT_POS) | (id as u128),
         }
     }
 
@@ -85,7 +85,7 @@ impl CompositeKey128 {
             return 1u128 << SIGN_BIT_POS; // special zero encoding
         }
 
-        let sign = if n < 0 { 1u128 } else { 0 };
+        let sign = ((n as i128) >> 127) as u128 & 1;
         let abs = n.unsigned_abs();
 
         let leading = 63 - abs.leading_zeros(); // floor(log2(n))
@@ -134,17 +134,18 @@ impl CompositeKey128 {
         f64::from_bits(bits)
     }
 
-    pub fn decode_i64(encoded: u128) -> i64 {
+    pub fn decode_i64(&self) -> i64 {
+        let key = self.get_value_bits() & ((1u128 << FLOAT_LENGTH)-1);
 
-        if encoded == (1u128 << SIGN_BIT_POS) {
+        if key == (1u128 << SIGN_BIT_POS) {
             return 0;
         }
 
         // Determine if negative
-        let was_neg = ((encoded >> SIGN_BIT_POS) & 1) == 0;
+        let was_neg = ((key >> SIGN_BIT_POS) & 1) == 0;
 
         // Undo inversion
-        let restored = if was_neg { !encoded } else { encoded };
+        let restored = if was_neg { !key } else { key };
 
         let exponent = ((restored >> MANTISSA_BITS) & ((1u128 << EXPONENT_BITS)-1)) as i64;
         let mantissa = restored & ((1u128 << MANTISSA_BITS)-1);
@@ -171,7 +172,7 @@ impl CompositeKey128 {
     }
 
     pub fn is_float(&self) -> bool {
-        true
+        ((self.raw >> TYPE_BIT_POS) & 1) != 0
     }
 
     pub fn cmp_key(&self, key: &Key) -> std::cmp::Ordering {
@@ -243,6 +244,7 @@ mod tests {
             let decoded = composite.decode_float();
             println!("input  : {:064b}", val.to_bits());
             println!("decoded: {:064b}", decoded.to_bits());
+            assert!(composite.is_float() == true);
             assert!(
                 decoded.to_bits() == val.to_bits(),
                 "f64 encode/decode failed for {}: got {}",
@@ -264,6 +266,7 @@ mod tests {
             println!("raw    : {:128b}", composite.get_key());
             println!("input  : {:064b}", (val as f64).to_bits());
             println!("decoded: {:064b}", decoded.to_bits());
+            assert!(composite.is_float() == false);
             assert!(
                 decoded == (val as f64),
                 "i64 encode/decode failed for {}: got {}",
@@ -278,13 +281,14 @@ mod tests {
         let values = [0, 1, 42, -1, -42, i64::MIN + 1, i64::MAX];
 
         for &val in &values {
-            let key_bits = CompositeKey128::encode_i64_to_float76(val);
+            let composite = CompositeKey128::new(Key::Int(val), 0);
             // Decode using the float decoder
-            let decoded = CompositeKey128::decode_i64(key_bits);
+            let decoded = composite.decode_i64();
             // integers will be exactly representable as f64
-            println!("raw    : {:128b}", key_bits);
+            println!("raw    : {:128b}", composite.get_key());
             println!("input  : {:064b}", val);
             println!("decoded: {:064b}", decoded);
+            assert!(composite.is_float() == false);
             assert!(
                 decoded == val,
                 "i64 encode/decode failed for {}: got {}",
