@@ -145,7 +145,7 @@ impl QueryMap {
             RustCastValue::Iterable(py_iterable) => {
                 self.insert_iterable(py_iterable, obj_id);
             }
-            
+            RustCastValue::Bool(_) => self.insert_exact(value, obj_id),
             RustCastValue::Str(_) => {
                 self.insert_exact(value, obj_id);
             },
@@ -243,6 +243,7 @@ impl QueryMap {
             RustCastValue::Str(_) => {
                 self.remove_exact(py_value, idx);
             },
+            RustCastValue::Bool(_) => self.remove_exact(py_value, idx),
             RustCastValue::Ind(indexable) => {
                 self.remove_exact(py_value, idx);
                 Python::with_gil(| py | {
