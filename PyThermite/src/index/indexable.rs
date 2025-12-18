@@ -51,7 +51,8 @@ struct IndexMeta{
 pub struct Indexable{
     meta: Arc<Mutex<SmallVec<[IndexMeta; 4]>>>,
     pub py_values: Arc<Mutex<HybridHashmap<SmolStr, PyValue>>>,
-    pub id: u32
+    pub id: u32,
+    pub recycle_id_on_drop: bool
 }
 
 
@@ -83,6 +84,7 @@ impl Indexable{
             meta: Arc::new(Mutex::new(SmallVec::new())),
             id: allocate_id(),
             py_values: Arc::new(Mutex::new(py_values)),
+            recycle_id_on_drop: true
         }
     }
 
@@ -90,7 +92,6 @@ impl Indexable{
     fn __setattr__<'py>(&self, py: Python, name: &str, value: Bound<'py, PyAny>) -> PyResult<()> {
 
         let val: PyValue = PyValue::new(value);
-        eprintln!("setting attr in python object");
 
         py.allow_threads(||{
             for ind in self.meta.lock().unwrap().iter() {
@@ -166,6 +167,7 @@ impl Indexable {
             meta: reference.meta.clone(),
             py_values: reference.py_values.clone(),
             id: reference.id,
+            recycle_id_on_drop: false // ID authority is the Python handle
         }
     }
 
@@ -188,8 +190,6 @@ impl Indexable {
         meta_lock.push(IndexMeta {
             index: index,
         });
-
-        eprintln!("Index added to object");
 
         Self::trim_indexes(&mut meta_lock, DEFAULT_INDEX_ARC.clone());
         meta_lock.sort_by_key(|ind| Arc::as_ptr(&ind.index.upgrade().unwrap_or_else( || DEFAULT_INDEX_ARC.clone())) as usize);
@@ -215,7 +215,9 @@ impl Indexable {
 
 impl Drop for Indexable {
     fn drop(&mut self) {
-        free_id(self.id);
+        if self.recycle_id_on_drop {
+            free_id(self.id);
+        }
     }
 }
 

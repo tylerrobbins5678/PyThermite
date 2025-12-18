@@ -290,8 +290,6 @@ impl IndexAPI{
         if attr.starts_with("_") {
             return;
         }
-
-        eprintln!("Updating index");
         
         if let Some(old_val) = old_pv {
             self.remove_index(item_id, &attr, old_val);
