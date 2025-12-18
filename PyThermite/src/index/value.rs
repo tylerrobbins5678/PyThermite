@@ -35,13 +35,29 @@ impl Clone for PyIterable {
 }
 
 #[derive(Clone, Debug)]
+pub struct StoredIndexable {
+    pub python_handle: Arc<Py<Indexable>>,
+    pub owned_handle: Arc<Indexable>
+}
+
+impl StoredIndexable {
+    pub fn from_py_ref(py_ref: PyRef<Indexable>, py: Python) -> Self {
+        Self {
+            owned_handle: Arc::new(Indexable::from_py_ref(&py_ref, py)),
+            python_handle: Arc::new(py_ref.into_pyobject(py).unwrap().unbind())
+        }
+    }
+}
+
+
+#[derive(Clone, Debug)]
 pub enum RustCastValue {
     Int(i64),
     Float(f64),
     Str(SmolStr),
     Bool(bool),
     Iterable(PyIterable),
-    Ind(Arc<Py<Indexable>>),
+    Ind(StoredIndexable),
     Unknown,
 }
 
@@ -71,7 +87,8 @@ impl PyValue {
 
         // complex types - pointer based equality
         } else if py_type.is_subclass(types::indexable_type().bind(py)).unwrap_or(false) {
-            RustCastValue::Ind(Arc::new(obj.extract::<Py<Indexable>>().expect("type checked")))
+            let py_ref = obj.extract::<PyRef<Indexable>>().expect("type checked");
+            RustCastValue::Ind(StoredIndexable::from_py_ref(py_ref, py))
         } else if py_type.is(pyo3::types::PyList::type_object(py)) {
             RustCastValue::Iterable(PyIterable::List(obj.extract::<Py<PyList>>().expect("type checked")))
         } else if py_type.is(pyo3::types::PyTuple::type_object(py)) {
@@ -109,7 +126,7 @@ impl PyValue {
                 s.hash(&mut hasher);
             },
             RustCastValue::Ind(ind) => {
-                hasher.write_u64(ind.as_ptr() as u64)
+                hasher.write_u64(ind.python_handle.as_ptr() as u64)
             },
             RustCastValue::Iterable(itr) => {
                 hasher.write_u64(itr as *const _ as u64)
@@ -154,7 +171,7 @@ impl PyValue {
             RustCastValue::Float(v) => v.into_py_any(py).unwrap(),
             RustCastValue::Bool(v) => v.into_py_any(py).unwrap(),
             RustCastValue::Str(v) => v.into_py_any(py).unwrap(),
-            _ => self.obj.clone().unwrap().clone_ref(py)
+            _ => self.obj.as_ref().unwrap().clone_ref(py)
         }
     }
 }
@@ -174,7 +191,7 @@ impl PartialEq for PyValue {
             (RustCastValue::Bool(a), RustCastValue::Bool(b)) => a == b,
             (RustCastValue::Str(a), RustCastValue::Str(b)) => a == b,
             // fallback to pointer identity
-            (RustCastValue::Ind(a), RustCastValue::Ind(b)) => a.as_ptr() == b.as_ptr(),
+            (RustCastValue::Ind(a), RustCastValue::Ind(b)) => a.python_handle.as_ptr() == b.python_handle.as_ptr(),
             (RustCastValue::Iterable(a), RustCastValue::Iterable(b)) => {
                 std::ptr::eq(a as *const _, b as *const _)
             },

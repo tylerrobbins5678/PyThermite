@@ -9,7 +9,7 @@ use smol_str::SmolStr;
 
 const QUERY_DEPTH_LEN: usize = 12;
 
-use crate::index::{Indexable, core::{query::{attr_parts, b_tree::{composite_key::CompositeKey128, ranged_b_tree::BitMapBTreeIter}}, structures::{hybrid_set::{HybridSet, HybridSetOps}, shards::ShardedHashMap}}, value::{PyIterable, PyValue, RustCastValue}};
+use crate::index::{Indexable, core::{query::{attr_parts, b_tree::{composite_key::CompositeKey128, ranged_b_tree::BitMapBTreeIter}}, structures::{hybrid_set::{HybridSet, HybridSetOps}, shards::ShardedHashMap}}, value::{PyIterable, PyValue, RustCastValue, StoredIndexable}};
 use crate::index::core::index::IndexAPI;
 use crate::index::core::stored_item::{StoredItem, StoredItemParent};
 use crate::index::core::query::b_tree::{BitMapBTree, Key};
@@ -58,43 +58,37 @@ impl QueryMap {
         writer.remove(key, obj_id);
     }
 
-    fn insert_indexable(&self, index_obj: &Arc<Py<Indexable>>, obj_id: u32){
+    fn insert_indexable(&self, index_obj: &StoredIndexable, obj_id: u32){
         let mut path = HybridSet::new();
 
         if let Some(parent) = self.parent.upgrade() {
             path = parent.get_parents_from_stored_item(obj_id as usize);
         }
 
-        let res = Python::with_gil(|py| {
-            let index_obj_ref = index_obj.try_borrow(py).expect("cannot borrow, owned by other object");
-            let id: u32 = index_obj_ref.id;
+        let id: u32 = index_obj.owned_handle.id;
 
-            if path.contains(id){
-                return None;
-            }
-            let py_values = index_obj_ref.get_py_values().clone();
+        if path.contains(id){
+            return;
+        }
 
-            // register the index in the object
-            let weak_nested = Arc::downgrade(&self.nested);
-            index_obj_ref.add_index(weak_nested.clone());
-            Some((id, py_values, weak_nested))
-        });
+        // register the index in the object
+        let weak_nested = Arc::downgrade(&self.nested);
+        index_obj.owned_handle.add_index(weak_nested.clone());
 
-        if let Some((id, py_values, weak_nested)) = res {
-            if self.nested.has_object_id(id) {
-                self.nested.register_path(id, obj_id);
-            } else {
-                let mut hs = HybridSet::new();
-                hs.add(obj_id);
-                let stored_parent = StoredItemParent {
-                    ids: hs,
-                    path_to_root: path,
-                    index: weak_nested.clone(),
-                };
+        if self.nested.has_object_id(id) {
+            self.nested.register_path(id, obj_id);
+        } else {
+            let mut hs = HybridSet::new();
+            hs.add(obj_id);
+            let stored_parent = StoredItemParent {
+                ids: hs,
+                path_to_root: path,
+                index: weak_nested.clone(),
+            };
 
-                let stored_item = StoredItem::new(index_obj.clone(), Some(stored_parent));
-                self.nested.add_object(weak_nested, id, stored_item, py_values);
-            }
+            let stored_item = StoredItem::new(index_obj.python_handle.clone(), index_obj.owned_handle.clone(), Some(stored_parent));
+            let py_values = index_obj.owned_handle.get_py_values();
+            self.nested.add_object(weak_nested, id, stored_item, py_values);
         }
     }
 
@@ -246,10 +240,7 @@ impl QueryMap {
             RustCastValue::Bool(_) => self.remove_exact(py_value, idx),
             RustCastValue::Ind(indexable) => {
                 self.remove_exact(py_value, idx);
-                Python::with_gil(| py | {
-                    let to_remove = indexable.borrow(py);
-                    self.nested.remove(to_remove.deref(), idx);
-                });
+                self.nested.remove(&indexable.owned_handle, idx);
             },
             RustCastValue::Iterable(py_iterable) => {
                 self.remove_iterable(py_iterable, idx);

@@ -48,10 +48,9 @@ struct IndexMeta{
 }
 
 #[pyclass(subclass, freelist = 512)]
-
 pub struct Indexable{
-    meta: Mutex<SmallVec<[IndexMeta; 4]>>,
-    pub py_values: ArcSwap<HybridHashmap<SmolStr, PyValue>>,
+    meta: Arc<Mutex<SmallVec<[IndexMeta; 4]>>>,
+    pub py_values: Arc<Mutex<HybridHashmap<SmolStr, PyValue>>>,
     pub id: u32
 }
 
@@ -81,9 +80,9 @@ impl Indexable{
         }
 
         Self {
-            meta: Mutex::new(SmallVec::new()),
+            meta: Arc::new(Mutex::new(SmallVec::new())),
             id: allocate_id(),
-            py_values: ArcSwap::from_pointee(py_values),
+            py_values: Arc::new(Mutex::new(py_values)),
         }
     }
 
@@ -91,6 +90,7 @@ impl Indexable{
     fn __setattr__<'py>(&self, py: Python, name: &str, value: Bound<'py, PyAny>) -> PyResult<()> {
 
         let val: PyValue = PyValue::new(value);
+        eprintln!("setting attr in python object");
 
         py.allow_threads(||{
             for ind in self.meta.lock().unwrap().iter() {
@@ -106,26 +106,22 @@ impl Indexable{
         });
 
         // update value
-        let mut new_map = (*self.py_values.load_full()).clone();
-        new_map.insert(SmolStr::new(name), val);
-        self.py_values.store(Arc::new(new_map));
+        self.py_values.lock().unwrap().insert(SmolStr::new(name), val);
         Ok(())
     }
 
     #[inline(always)]
-    fn __getattribute__(self_: Bound<'_, Self>, py: Python, name: Bound<'_, PyString>) -> PyResult<PyObject> {
-
-        let rust_self = self_.borrow();
+    fn __getattribute__(self_: PyRef<'_, Self>, py: Python, name: Bound<'_, PyString>) -> PyResult<PyObject> {
 
         let name_str = match name.to_str() {
             Ok(s) => s,
             Err(_) => return Err(PyAttributeError::new_err("Invalid attribute name")),
         };
-        let py_values = rust_self.get_py_values();
+        let py_values = self_.get_py_values();
         if let Some(value) = py_values.get(name_str) {
             Ok(value.get_obj(py))
         } else {
-
+            drop(py_values);
             let res = unsafe { ffi::PyObject_GenericGetAttr(self_.into_ptr(), name.into_ptr()) };
             if res.is_null() {
                 Err(PyErr::fetch(py))
@@ -164,6 +160,15 @@ impl Indexable{
 
 impl Indexable {
 
+    pub fn from_py_ref(reference: &PyRef<Indexable>, _py: Python) -> Self {
+        // `reference` is a GIL-bound borrow; we clone the Arc pointers for Rust ownership
+        Self {
+            meta: reference.meta.clone(),
+            py_values: reference.py_values.clone(),
+            id: reference.id,
+        }
+    }
+
     fn trim_indexes(meta_lock: &mut MutexGuard<'_, SmallVec<[IndexMeta; 4]>>, remove: Arc<IndexAPI>){
         meta_lock.retain(|m| {
             // Try to upgrade the Weak
@@ -184,6 +189,8 @@ impl Indexable {
             index: index,
         });
 
+        eprintln!("Index added to object");
+
         Self::trim_indexes(&mut meta_lock, DEFAULT_INDEX_ARC.clone());
         meta_lock.sort_by_key(|ind| Arc::as_ptr(&ind.index.upgrade().unwrap_or_else( || DEFAULT_INDEX_ARC.clone())) as usize);
     }
@@ -193,8 +200,16 @@ impl Indexable {
         Self::trim_indexes(&mut meta_lock, index);
     }
 
-    pub fn get_py_values(&self) -> Guard<Arc<HybridHashmap<SmolStr, PyValue>>>{
-        self.py_values.load()
+    pub fn get_py_values(&self) -> MutexGuard<'_, HybridHashmap<SmolStr, PyValue>>{
+        self.py_values.lock().unwrap()
+    }
+
+    pub fn with_attr<F, R>(&self, key: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&PyValue) -> R
+    {
+        let guard = self.get_py_values();
+        guard.get(key).map(f)
     }
 }
 

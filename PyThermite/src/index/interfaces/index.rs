@@ -63,14 +63,12 @@ impl Index {
 
     pub fn add_object_many(&self, py: Python, objs: Vec<PyRef<Indexable>>) -> PyResult<()> {
         
-        let weak_self: Weak<IndexAPI> = Arc::downgrade(&self.inner);
-        self.inner.store_items(py, weak_self, &objs)?;
-
-        let raw_objs: Vec<&Indexable> = objs.iter()
-            .map(| obj | {
-                obj.deref()
-            })
-            .collect();
+        let raw_objs: Vec<(Indexable, Py<Indexable>)> = objs.into_iter().map(|obj| {
+            (
+                Indexable::from_py_ref(&obj, py),
+                obj.into_pyobject(py).unwrap().unbind()
+            )
+        }).collect();
 
         py.allow_threads(|| {
             let weak_index = Arc::downgrade(&self.inner);
@@ -83,18 +81,18 @@ impl Index {
 
     pub fn add_object(&self, py: Python, py_ref: PyRef<Indexable>) -> PyResult<()> {
 
-        let py_val_hashmap = py_ref.get_py_values().clone();
-        let idx = py_ref.id;
-        let py_obj: Py<Indexable> = py_ref.into_pyobject(py)?.unbind();
-        let py_obj_arc = Arc::new(py_obj);
+        let rust_handle = Arc::new(Indexable::from_py_ref(&py_ref, py));
+        let py_handle = Arc::new(py_ref.into_pyobject(py)?.unbind());
 
         py.allow_threads(||{
-            let stored_item = StoredItem::new(py_obj_arc.clone(), None);
             let weak_index = Arc::downgrade(&self.inner);
-            self.inner.add_object(weak_index, idx, stored_item, py_val_hashmap);
+            rust_handle.add_index(weak_index.clone());
+            let stored_item = StoredItem::new(py_handle, rust_handle.clone(), None);
+            // i dont like this clone - need to remove
+            let py_val_hashmap = rust_handle.get_py_values();
+            self.inner.add_object(weak_index, rust_handle.id, stored_item, py_val_hashmap);
         });
 
-        py_obj_arc.extract::<PyRef<Indexable>>(py)?.add_index(Arc::downgrade(&self.inner));
 
         Ok(())
     }

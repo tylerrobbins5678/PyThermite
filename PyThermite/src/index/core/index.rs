@@ -1,5 +1,5 @@
 
-use std::{fmt, sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak}, vec};
+use std::{fmt, ops::Deref, sync::{Arc, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak}, vec};
 use croaring::Bitmap;
 use pyo3::prelude::*;
 use rustc_hash::FxHashMap;
@@ -38,10 +38,10 @@ impl IndexAPI{
         let items_reader = self.get_items_reader();
         for item_opt in items_reader.iter(){
             if let Some(item) = item_opt{
-                result.push(item);
+                result.push(item.get_py_ref(py));
             }
         }
-        Ok(result.iter().map(|arc| (**arc).get_py_ref(py)).collect())
+        Ok(result)
     }
 
     pub fn get_direct_parents(&self, to_get: &Bitmap) -> HybridSet {
@@ -76,46 +76,37 @@ impl IndexAPI{
         }
     }
 
-    pub fn store_items(
+    pub fn store_item(
         &self,
-        py: Python,
-        weak_self: Weak<Self>,
-        raw_objs: &Vec<PyRef<Indexable>>
-    ) -> PyResult<()>{
+        py_handle: Py<Indexable>,
+        rust_handle: Arc<Indexable>
+    ) {
 
+        let idx = rust_handle.id as usize;
+        let stored_item = StoredItem::new(Arc::new(py_handle), rust_handle,None);
+        
         let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<Option<StoredItem>>> = self.get_items_writer();
-
-        for py_ref in raw_objs{
-            let idx: usize;
-            {
-                let borrowed_ref = py_ref;
-                idx = borrowed_ref.id as usize;
-                borrowed_ref.add_index(weak_self.clone());
-            }
-
-            let py_obj_arc: Arc<Py<Indexable>> = Arc::new(py_ref.into_pyobject(py)?.into());
-            let stored_item = StoredItem::new(py_obj_arc.clone(), None);
-            
-            if items_writer.len() <= idx{
-                items_writer.resize(idx * 2, None);
-            }
-            
-            items_writer[idx] = Some(stored_item);
+        if items_writer.len() <= idx{
+            items_writer.resize(idx * 2, None);
         }
-        Ok(())
+
+        items_writer[idx] = Some(stored_item);
     }
 
     pub fn add_object_many(
         &self,
         weak_self: Weak<Self>,
-        raw_objs: Vec<&Indexable>
+        raw_objs: Vec<(Indexable, Py<Indexable>)>
     ) {
 
-        for py_ref in raw_objs {
-            self.get_allowed_items_writer().add(py_ref.id);
-            for (key, value) in (*py_ref.get_py_values()).iter(){
+        for (rust_handle, py_handle) in raw_objs {
+            let rust_handle = Arc::new(rust_handle);
+            rust_handle.add_index(weak_self.clone());
+            self.store_item(py_handle, rust_handle.clone());
+            self.get_allowed_items_writer().add(rust_handle.id);
+            for (key, value) in (*rust_handle.get_py_values()).iter(){
                 if key.starts_with("_"){continue;}
-                self.add_index(weak_self.clone(), py_ref.id, key.clone(), value);
+                self.add_index(weak_self.clone(), rust_handle.id, key.clone(), value);
             }
         }
     }
@@ -137,7 +128,7 @@ impl IndexAPI{
         weak_self: Weak<IndexAPI>,
         idx: u32,
         stored_item: StoredItem,
-        py_val_hashmap: Arc<HybridHashmap<SmolStr, PyValue>>
+        py_val_hashmap: MutexGuard<HybridHashmap<SmolStr, PyValue>>
     ) {
 
         self.get_allowed_items_writer().add(idx);
@@ -299,6 +290,8 @@ impl IndexAPI{
         if attr.starts_with("_") {
             return;
         }
+
+        eprintln!("Updating index");
         
         if let Some(old_val) = old_pv {
             self.remove_index(item_id, &attr, old_val);
@@ -359,6 +352,16 @@ impl IndexAPI{
             items: self.items.clone(),
             allowed_items: bm
         }
+    }
+
+    pub fn is_attr_equal(&self, id: usize, attr: &str, val: &PyValue) -> bool {
+        self.get_items_reader()
+            .get(id)
+            .and_then(|opt| opt.as_ref())
+            .and_then(|item| {
+                item.with_attr(attr, |py_val| py_val == val)
+            })
+            .unwrap_or(false)
     }
 
     fn get_items_writer(&self) -> RwLockWriteGuard<Vec<Option<StoredItem>>> {

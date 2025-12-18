@@ -1,7 +1,7 @@
 use pyo3::{Bound, IntoPyObject, Py, PyAny, PyRef, Python};
 use std::{hash::{Hash, Hasher}, sync::{Arc, Weak}};
 
-use crate::index::core::{structures::hybrid_set::{HybridSet, HybridSetOps}, index::IndexAPI};
+use crate::index::{core::{index::IndexAPI, structures::hybrid_set::{HybridSet, HybridSetOps}}, value::PyValue};
 use crate::index::Indexable;
 
 #[derive(Clone, Debug)]
@@ -13,14 +13,21 @@ pub struct StoredItemParent {
 
 #[derive(Clone, Debug)]
 pub struct StoredItem{
+    // these two are the same object, one is a rust handle and the other is a python handle
     py_item: Arc<Py<Indexable>>,
+    owned_py_item: Arc<Indexable>,
     parent: Option<StoredItemParent>, // parent index id
 }
 
 impl<'py> StoredItem {
-    pub fn new(py_item: Arc<Py<Indexable>>, parent: Option<StoredItemParent>) -> Self {
+    pub fn new(
+        py_handle: Arc<Py<Indexable>>,
+        rust_handle: Arc<Indexable>,
+        parent: Option<StoredItemParent>
+    ) -> Self {
         Self {
-            py_item: py_item.clone(),
+            py_item: py_handle,
+            owned_py_item: rust_handle,
             parent: parent,
         }
     }
@@ -68,6 +75,13 @@ impl<'py> StoredItem {
         } else {
             res
         }
+    }
+
+    pub fn with_attr<F, R>(&self, attr: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&PyValue) -> R,
+    {
+        self.owned_py_item.with_attr(attr, f)
     }
 
     pub fn get_py_ref(&self, py: Python) -> Py<Indexable> {
