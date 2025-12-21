@@ -14,7 +14,7 @@ use crate::index::core::query::{evaluate_query, filter_index_by_hashes, kwargs_t
 #[derive(Clone)]
 pub struct FilteredIndex {
     pub index: Arc<RwLock<FxHashMap<SmolStr, Box<QueryMap>>>>,
-    pub items: Arc<RwLock<Vec<Option<StoredItem>>>>,
+    pub items: Arc<RwLock<Vec<StoredItem>>>,
     pub allowed_items: Bitmap,
 }
 
@@ -54,9 +54,8 @@ impl FilteredIndex{
         self.get_from_indexes(py, &self.allowed_items)
     }
 
-    pub fn rebase(&self, py: Python) -> PyResult<Index> {
+    pub fn rebase(&self) -> PyResult<Index> {
 
-        let items = self.items.read().unwrap();
         let max_size = self.allowed_items.maximum().unwrap_or(0);
         let index_api = IndexAPI {
             index: Arc::new(RwLock::new(FxHashMap::default())),
@@ -64,26 +63,27 @@ impl FilteredIndex{
             allowed_items: Arc::new(RwLock::new(self.allowed_items.clone())),
             parent_index: None,
         };
-
+        
         let mut new_index = index_api.index.write().unwrap();
         let mut new_items = index_api.items.write().unwrap();
         
         let res_index_arc = Arc::downgrade(&Arc::new(index_api.clone()));
-
-        new_items.resize(max_size as usize + 1, None);
         
+        new_items.resize(max_size as usize + 1, StoredItem::default());
+        
+        let items = self.items.read().unwrap();
         for idx in self.allowed_items.iter() {
-            let item = items[idx as usize].as_ref().unwrap();
+            let item = &items[idx as usize];
 
-            let py_item = item.borrow_py_ref(py);
-            py_item.add_index(res_index_arc.clone());
+            let owned_ref = item.get_owned_handle();
+            owned_ref.add_index(res_index_arc.clone());
 
-            new_items[idx as usize] = Some(item.clone());
+            new_items[idx as usize] = item.clone();
             
-            for (attr, val) in py_item.get_py_values().iter() {
+            for (attr, val) in owned_ref.get_py_values().iter() {
                 new_index
                     .entry(SmolStr::new(attr))
-                    .or_insert_with(|| Box::new(QueryMap::new(res_index_arc.clone())))
+                    .or_insert_with(|| Box::new(QueryMap::new(res_index_arc.clone(), attr.clone())))
                     .insert(val, idx);
             }
         }

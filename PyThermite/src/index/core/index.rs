@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
-use crate::index::{HybridHashmap, Indexable, PyQueryExpr, core::structures::hybrid_set::{HybridSet, HybridSetOps}, interfaces::filtered_index::FilteredIndex};
+use crate::index::{HybridHashmap, Indexable, PyQueryExpr, core::structures::hybrid_set::{HybridSet, HybridSetOps}, interfaces::filtered_index::FilteredIndex, types::DEFAULT_INDEXABLE_ARC};
 use crate::index::core::query::{QueryMap, attr_parts, evaluate_query, filter_index_by_hashes, kwargs_to_hash_query};
 
 use crate::index::core::stored_item::StoredItem;
@@ -17,7 +17,7 @@ const QUERY_DEPTH_LEN: usize = 12;
 #[derive(Clone, Default)]
 pub struct IndexAPI{
     pub index: Arc<RwLock<FxHashMap<SmolStr, Box<QueryMap>>>>,
-    pub items: Arc<RwLock<Vec<Option<StoredItem>>>>,
+    pub items: Arc<RwLock<Vec<StoredItem>>>,
     pub allowed_items: Arc<RwLock<Bitmap>>,
     pub parent_index: Option<Weak<IndexAPI>>,
 }
@@ -35,11 +35,10 @@ impl IndexAPI{
 
     pub fn collect(&self, py:Python) -> PyResult<Vec<Py<Indexable>>> {
         let mut result = vec![];
-        let items_reader = self.get_items_reader();
-        for item_opt in items_reader.iter(){
-            if let Some(item) = item_opt{
-                result.push(item.get_py_ref(py));
-            }
+        let allowed_items = self.get_allowed_items_reader();
+
+        for idx in allowed_items.iter(){
+            result.push(self.get_items_reader().get(idx as usize).unwrap().get_py_ref(py));
         }
         Ok(result)
     }
@@ -49,9 +48,7 @@ impl IndexAPI{
         let mut result = HybridSet::new();
 
         for idx in to_get.iter(){
-            if let Some(item) = items_reader[idx as usize].as_ref(){
-                result.or_inplace(item.get_parent_ids());
-            }
+            result.or_inplace(items_reader[idx as usize].get_parent_ids());
         }
 
         result
@@ -69,11 +66,7 @@ impl IndexAPI{
 
     pub fn get_parents_from_stored_item(&self, idx: usize) -> HybridSet {
         let guard = self.get_items_reader();
-        if let Some(stored_item) = &guard[idx] {
-            stored_item.get_path_to_root()
-        } else {
-            HybridSet::new()
-        }
+        guard[idx].get_path_to_root()
     }
 
     pub fn store_item(
@@ -85,12 +78,12 @@ impl IndexAPI{
         let idx = rust_handle.id as usize;
         let stored_item = StoredItem::new(Arc::new(py_handle), rust_handle,None);
         
-        let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<Option<StoredItem>>> = self.get_items_writer();
+        let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<StoredItem>> = self.get_items_writer();
         if items_writer.len() <= idx{
-            items_writer.resize(idx * 2, None);
+            items_writer.resize(idx * 2, StoredItem::default());
         }
 
-        items_writer[idx] = Some(stored_item);
+        items_writer[idx] = stored_item;
     }
 
     pub fn add_object_many(
@@ -99,28 +92,34 @@ impl IndexAPI{
         raw_objs: Vec<(Indexable, Py<Indexable>)>
     ) {
 
+        let mut allowed = Bitmap::new();
+
         for (rust_handle, py_handle) in raw_objs {
             let rust_handle = Arc::new(rust_handle);
             rust_handle.add_index(weak_self.clone());
+            allowed.add(rust_handle.id);
             self.store_item(py_handle, rust_handle.clone());
-            self.get_allowed_items_writer().add(rust_handle.id);
             for (key, value) in (*rust_handle.get_py_values()).iter(){
                 if key.starts_with("_"){continue;}
                 self.add_index(weak_self.clone(), rust_handle.id, key.clone(), value);
             }
         }
+
+        let mut allowed_writer = self.get_allowed_items_writer();
+        allowed_writer.or_inplace(&allowed);
     }
 
     pub fn has_object_id(&self, id: u32) -> bool {
-        self.get_items_reader().get(id as usize).unwrap_or(&None).is_some()
+        !Arc::ptr_eq(
+            self.get_items_reader().get(id as usize).unwrap_or(&StoredItem::default()).get_owned_handle(),
+            &DEFAULT_INDEXABLE_ARC
+        )
     }
 
     pub fn register_path(&self, object_id: u32, parent_id: u32) {
         let mut writer = self.get_items_writer();
-        match writer.get_mut(object_id as usize).unwrap(){
-            Some(obj) => obj.add_parent(parent_id),
-            None => panic!("unreachable"),
-        }
+        let obj = writer.get_mut(object_id as usize).unwrap();
+        obj.add_parent(parent_id);
     }
 
     pub fn add_object(
@@ -133,12 +132,12 @@ impl IndexAPI{
 
         self.get_allowed_items_writer().add(idx);
         {
-            let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<Option<StoredItem>>> = self.get_items_writer();
+            let mut items_writer = self.get_items_writer();
             if items_writer.len() <= idx as usize{
-                items_writer.resize(idx as usize + 1, None);
+                items_writer.resize(idx as usize + 1, StoredItem::default());
             }
 
-            items_writer[idx as usize] = Some(stored_item);
+            items_writer[idx as usize] = stored_item;
         }
 
         for (key, value) in py_val_hashmap.iter() {
@@ -151,10 +150,9 @@ impl IndexAPI{
         let item_id = item.id;
         let mut writer = self.get_items_writer();
         if let Some(stored_item) = writer.get_mut(item_id as usize){
-            let stored_item = stored_item.as_mut().unwrap();
             stored_item.remove_parent(parent_id);
             if stored_item.is_orphaned() {
-                writer[item_id as usize] = None;
+                writer[item_id as usize] = StoredItem::default();
                 drop(writer);
 
                 for (key, value) in (*item.get_py_values()).iter(){
@@ -188,7 +186,7 @@ impl IndexAPI{
         for idx in survivors.iter() {
 
             let reader = self.get_items_reader();
-            let item = reader.get(idx as usize).unwrap().clone().unwrap();
+            let item = reader.get(idx as usize).unwrap().clone();
 
             let py_item = item.borrow_py_ref(py);
             
@@ -198,7 +196,7 @@ impl IndexAPI{
                 }
                 index
                     .entry(attr.clone())
-                    .or_insert_with(|| Box::new(QueryMap::new(self_arc.clone())))
+                    .or_insert_with(|| Box::new(QueryMap::new(self_arc.clone(), attr.clone())))
                     .insert(&val, idx);
             }
         }
@@ -300,7 +298,7 @@ impl IndexAPI{
     pub fn get_from_indexes(&self, py: Python, indexes: Bitmap) -> PyResult<Vec<Py<Indexable>>>{
         let items_read = self.get_items_reader();
         let results: Vec<Py<Indexable>> = indexes.iter()
-            .map(|arc| items_read.get(arc as usize).unwrap().as_ref().unwrap().get_py_ref(py))
+            .map(|arc| items_read.get(arc as usize).unwrap().get_py_ref(py))
             .collect();
 
         Ok(results)
@@ -318,7 +316,7 @@ impl IndexAPI{
             return;
         }
 
-        let qmap = QueryMap::new(weak_self);
+        let qmap = QueryMap::new(weak_self, attr.clone());
         qmap.insert(value, obj_id);
         self.get_index_writer().insert(attr, Box::new(qmap));
 
@@ -355,19 +353,18 @@ impl IndexAPI{
     pub fn is_attr_equal(&self, id: usize, attr: &str, val: &PyValue) -> bool {
         self.get_items_reader()
             .get(id)
-            .and_then(|opt| opt.as_ref())
             .and_then(|item| {
                 item.with_attr(attr, |py_val| py_val == val)
             })
             .unwrap_or(false)
     }
 
-    fn get_items_writer(&self) -> RwLockWriteGuard<Vec<Option<StoredItem>>> {
+    fn get_items_writer(&self) -> RwLockWriteGuard<Vec<StoredItem>> {
         self.items.write().unwrap()
         //self.items.try_write().expect("items writer deadlock")
     }
 
-    fn get_items_reader(&self) -> RwLockReadGuard<Vec<Option<StoredItem>>> {
+    fn get_items_reader(&self) -> RwLockReadGuard<Vec<StoredItem>> {
         self.items.read().unwrap()
         //self.items.try_read().expect("cannot read from items")
     }

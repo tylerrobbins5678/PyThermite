@@ -1,10 +1,31 @@
-use once_cell::sync::OnceCell;
-use pyo3::{Py, PyTypeInfo, Python, types::{PyAnyMethods, PyType}};
+use std::sync::Arc;
+
+use once_cell::sync::{Lazy, OnceCell};
+use pyo3::{Py, PyAny, PyTypeInfo, Python, types::{PyAnyMethods, PyType}};
 use smallvec::SmallVec;
 
-use crate::index::Indexable;
+use crate::index::{HybridHashmap, Indexable, core::index::IndexAPI};
+
+// devaults
+pub static DEFAULT_INDEX_ARC: Lazy<Arc<IndexAPI>> = Lazy::new(|| Arc::new(IndexAPI::new(None)));
+pub static DEFAULT_INDEXABLE: Lazy<Indexable> = Lazy::new(|| Indexable::default());
+
+pub static DEFAULT_INDEXABLE_ARC: Lazy<Arc<Indexable>> = Lazy::new(|| {
+    Arc::new(Indexable::default())
+});
+pub static DEFAULT_PY_INDEXABLE_ARC: Lazy<Arc<Py<Indexable>>> = Lazy::new(|| {
+    Python::with_gil(|py| {
+        Arc::new(Py::new(py, Indexable::default()).unwrap())
+    })
+});
+pub static DEFAULT_PY_NONE_ARC: Lazy<Arc<Py<PyAny>>> = Lazy::new(|| {
+    Python::with_gil(|py| {
+        Arc::new(py.None())
+    })
+});
 
 
+// types
 static INDEXABLE_TYPE: OnceCell<Py<PyType>> = OnceCell::new();
 
 pub fn indexable_type() -> &'static Py<PyType> {

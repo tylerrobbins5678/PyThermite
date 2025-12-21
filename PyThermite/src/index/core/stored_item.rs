@@ -1,7 +1,7 @@
 use pyo3::{Bound, IntoPyObject, Py, PyAny, PyRef, Python};
 use std::{hash::{Hash, Hasher}, sync::{Arc, Weak}};
 
-use crate::index::{core::{index::IndexAPI, structures::hybrid_set::{HybridSet, HybridSetOps}}, value::PyValue};
+use crate::index::{core::{index::IndexAPI, structures::hybrid_set::{HybridSet, HybridSetOps}}, types::{DEFAULT_INDEX_ARC, DEFAULT_INDEXABLE_ARC, DEFAULT_PY_INDEXABLE_ARC, DEFAULT_PY_NONE_ARC}, value::PyValue};
 use crate::index::Indexable;
 
 #[derive(Clone, Debug)]
@@ -84,12 +84,26 @@ impl<'py> StoredItem {
         self.owned_py_item.with_attr(attr, f)
     }
 
+    pub fn get_owned_handle(&self) -> &Arc<Indexable> {
+        &self.owned_py_item
+    }
+
     pub fn get_py_ref(&self, py: Python) -> Py<Indexable> {
         self.py_item.clone_ref(py)
     }
 
     pub fn borrow_py_ref(&self, py: Python<'py>) -> PyRef<'py, Indexable> {
         self.py_item.bind(py).borrow()
+    }
+}
+
+impl Default for StoredItem {
+    fn default() -> Self {
+        Self {
+            py_item: DEFAULT_PY_INDEXABLE_ARC.clone(),
+            owned_py_item: DEFAULT_INDEXABLE_ARC.clone(),
+            parent: None,
+        }
     }
 }
 

@@ -20,18 +20,27 @@ pub struct QueryMap {
     pub parent: Weak<IndexAPI>,
     pub num_ordered: RwLock<BitMapBTree>,
     pub nested: Arc<IndexAPI>,
+    pub attr_stored: SmolStr,
+    stored_items: Arc<RwLock<Vec<StoredItem>>>,
 }
 
 unsafe impl Send for QueryMap {}
 unsafe impl Sync for QueryMap {}
 
 impl QueryMap {
-    pub fn new(parent: Weak<IndexAPI>) -> Self{
+    pub fn new(parent: Weak<IndexAPI>, attr_name: SmolStr) -> Self{
+        let stored_items = if let Some(p) = parent.upgrade() {
+            p.items.clone()
+        } else {
+            Arc::new(RwLock::new(Vec::new()))
+        };
         Self{
             exact: ShardedHashMap::<PyValue, HybridSet>::with_shard_count(16),
+            attr_stored: attr_name,
             parent: parent.clone(),
             num_ordered: RwLock::new(BitMapBTree::new()),
             nested: Arc::new(IndexAPI::new(Some(parent))),
+            stored_items
         }
     }
 
@@ -320,6 +329,9 @@ impl QueryMap {
         self.nested.get_direct_parents(child_bm)
     }
 
+    pub fn get_stored_items(&self) -> &Arc<RwLock<Vec<StoredItem>>> {
+        &self.stored_items
+    }
 }
 
 

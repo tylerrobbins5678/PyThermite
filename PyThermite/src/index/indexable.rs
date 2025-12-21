@@ -17,12 +17,12 @@ use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyDict, PyList, PyString}, 
 
 use smol_str::SmolStr;
 
+use crate::index::types::DEFAULT_INDEX_ARC;
 use crate::index::value::PyValue;
 use crate::index::HybridHashmap;
 use crate::index::core::index::IndexAPI;
 
 static GLOBAL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
-static DEFAULT_INDEX_ARC: Lazy<Arc<IndexAPI>> = Lazy::new(|| Arc::new(IndexAPI::new(None)));
 
 static FREE_IDS: Lazy<Mutex<Vec<u32>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
@@ -61,7 +61,6 @@ impl Indexable{
 
     #[new]
     #[pyo3(signature = (*_args, **kwargs))]
-    #[inline(always)]
     fn new(
         _args: &Bound<'_, PyAny>, kwargs: Option<&Bound<'_, PyDict>>
     ) -> Self {
@@ -88,7 +87,6 @@ impl Indexable{
         }
     }
 
-    #[inline(always)]
     fn __setattr__<'py>(&self, py: Python, name: &str, value: Bound<'py, PyAny>) -> PyResult<()> {
 
         let val: PyValue = PyValue::new(value);
@@ -111,7 +109,6 @@ impl Indexable{
         Ok(())
     }
 
-    #[inline(always)]
     fn __getattribute__(self_: PyRef<'_, Self>, py: Python, name: Bound<'_, PyString>) -> PyResult<PyObject> {
 
         let name_str = match name.to_str() {
@@ -239,5 +236,16 @@ impl fmt::Debug for Indexable {
             .field("id", &self.id)
             .field("attributes", &self.py_values)
             .finish()
+    }
+}
+
+impl Default for Indexable {
+    fn default() -> Self {
+        Self {
+            meta: Arc::new(Mutex::new(SmallVec::new())),
+            id: allocate_id(),
+            py_values: Arc::new(Mutex::new(HybridHashmap::Small(SmallVec::new()))),
+            recycle_id_on_drop: true
+        }
     }
 }
