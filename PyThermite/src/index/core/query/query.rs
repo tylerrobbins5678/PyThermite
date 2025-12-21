@@ -9,7 +9,7 @@ use smol_str::SmolStr;
 
 const QUERY_DEPTH_LEN: usize = 12;
 
-use crate::index::{Indexable, core::{query::{attr_parts, b_tree::{composite_key::CompositeKey128, ranged_b_tree::BitMapBTreeIter}}, structures::{hybrid_set::{HybridSet, HybridSetOps}, shards::ShardedHashMap}}, value::{PyIterable, PyValue, RustCastValue, StoredIndexable}};
+use crate::index::{Indexable, core::{query::{attr_parts, b_tree::{composite_key::CompositeKey128, ranged_b_tree::BitMapBTreeIter}}, structures::{hybrid_set::{HybridSet, HybridSetOps}, shards::ShardedHashMap}}, types::StrId, value::{PyIterable, PyValue, RustCastValue, StoredIndexable}};
 use crate::index::core::index::IndexAPI;
 use crate::index::core::stored_item::{StoredItem, StoredItemParent};
 use crate::index::core::query::b_tree::{BitMapBTree, Key};
@@ -20,7 +20,7 @@ pub struct QueryMap {
     pub parent: Weak<IndexAPI>,
     pub num_ordered: RwLock<BitMapBTree>,
     pub nested: Arc<IndexAPI>,
-    pub attr_stored: SmolStr,
+    pub attr_stored: StrId,
     stored_items: Arc<RwLock<Vec<StoredItem>>>,
 }
 
@@ -28,7 +28,7 @@ unsafe impl Send for QueryMap {}
 unsafe impl Sync for QueryMap {}
 
 impl QueryMap {
-    pub fn new(parent: Weak<IndexAPI>, attr_name: SmolStr) -> Self{
+    pub fn new(parent: Weak<IndexAPI>, attr_id: StrId) -> Self{
         let stored_items = if let Some(p) = parent.upgrade() {
             p.items.clone()
         } else {
@@ -36,7 +36,7 @@ impl QueryMap {
         };
         Self{
             exact: ShardedHashMap::<PyValue, HybridSet>::with_shard_count(16),
-            attr_stored: attr_name,
+            attr_stored: attr_id,
             parent: parent.clone(),
             num_ordered: RwLock::new(BitMapBTree::new()),
             nested: Arc::new(IndexAPI::new(Some(parent))),

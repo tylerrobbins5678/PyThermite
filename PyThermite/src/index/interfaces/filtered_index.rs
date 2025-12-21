@@ -5,7 +5,7 @@ use pyo3::{pyclass, pymethods, Py, PyAny, PyResult, Python};
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 
-use crate::index::{Index, Indexable, PyQueryExpr};
+use crate::index::{Index, Indexable, PyQueryExpr, types::{IndexTree, StrId}};
 use crate::index::core::stored_item::StoredItem;
 use crate::index::core::index::IndexAPI;
 use crate::index::core::query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, QueryMap};
@@ -13,7 +13,7 @@ use crate::index::core::query::{evaluate_query, filter_index_by_hashes, kwargs_t
 #[pyclass]
 #[derive(Clone)]
 pub struct FilteredIndex {
-    pub index: Arc<RwLock<FxHashMap<SmolStr, Box<QueryMap>>>>,
+    pub index: IndexTree,
     pub items: Arc<RwLock<Vec<StoredItem>>>,
     pub allowed_items: Bitmap,
 }
@@ -58,7 +58,7 @@ impl FilteredIndex{
 
         let max_size = self.allowed_items.maximum().unwrap_or(0);
         let index_api = IndexAPI {
-            index: Arc::new(RwLock::new(FxHashMap::default())),
+            index: Arc::new(RwLock::new(vec![])),
             items: Arc::new(RwLock::new(Vec::with_capacity(max_size as usize))),
             allowed_items: Arc::new(RwLock::new(self.allowed_items.clone())),
             parent_index: None,
@@ -80,11 +80,17 @@ impl FilteredIndex{
 
             new_items[idx as usize] = item.clone();
             
-            for (attr, val) in owned_ref.get_py_values().iter() {
-                new_index
-                    .entry(SmolStr::new(attr))
-                    .or_insert_with(|| Box::new(QueryMap::new(res_index_arc.clone(), attr.clone())))
-                    .insert(val, idx);
+            for (attr_id, val) in owned_ref.get_py_values().iter() {
+                match new_index.get_mut(*attr_id as usize){
+                    Some(val_map) => {
+                        val_map.insert(&val, idx);
+                    },
+                    None => {
+                        let qmap = QueryMap::new(res_index_arc.clone(), *attr_id);
+                        qmap.insert(&val, idx);
+                        new_index.insert(*attr_id as usize, Box::new(qmap));
+                    }
+                }
             }
         }
 

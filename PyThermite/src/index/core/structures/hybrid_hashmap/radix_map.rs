@@ -6,6 +6,7 @@ use croaring::Bitmap;
 use rustc_hash::FxHasher;
 
 use crate::index::core::query::QueryMap;
+use crate::index::core::stored_item;
 use crate::index::value::PyValue;
 
 
@@ -21,12 +22,78 @@ impl <const D: usize>RadixMap<D> {
     }
 
     #[inline(always)]
-    pub fn add(&mut self, val: &PyValue, id: u32){
+    pub fn add(mut self, val: &PyValue, id: u32, query_map: QueryMap) -> Self {
+        // build hash
         let hash = val.get_hash();
         let bytes = hash.to_le_bytes();
-        for i in 0..D {
-            self.get_bitmap_mut(i, &bytes).add(id);
+        // process first bitmap
+        let bm = self.get_bitmap_mut(0, &bytes);
+        let mut conflicts = bm.clone();
+        bm.add(id);
+        // check for conflicts and insert into rest of bitmaps
+        for i in 1..D {
+            let bm = self.get_bitmap_mut(i, &bytes);
+            conflicts.and_inplace(bm);
+            bm.add(id);
         }
+
+        if conflicts.is_empty() {
+            return self;
+        }
+
+        // check existing overflow map
+        for (existing_val, bm) in self.overflow_map.iter_mut() {
+            if existing_val == val {
+                bm.add(id);
+                return self;
+            }
+        }
+
+        // check if is true conflict
+        let stored_items = query_map.get_stored_items().read().unwrap();
+        let cid =  conflicts.iter().next().unwrap();
+        let stored_item = stored_items.get(cid as usize).unwrap();
+        let mut new_length: u32 = 0;
+        stored_item.with_attr_id(cid, |existing_val| {
+            if existing_val == val {
+                // true conflict, add to overflow
+                let new_bm = Bitmap::from([id]);
+                self.overflow_map.push((val.clone(), new_bm));
+                return;
+            } else {
+                // real conflict, need to expand
+                // calculate bits shared by conflicts
+                let existing_bytes = existing_val.get_hash().to_le_bytes();
+                for b in existing_bytes.iter().zip(bytes.iter()).enumerate() {
+                    let (i, (eb, nb)) = b;
+                    if eb != nb {
+                        new_length = i as u32 + 1;
+                        return;
+                    }
+                }
+                // asusme all bits same - need to push to overflow
+                new_length = 0u32;
+                let new_bm = Bitmap::from([id]);
+                self.overflow_map.push((val.clone(), new_bm));
+            }
+        });
+
+        drop(stored_items);
+
+        match new_length {
+            0 => return self, // already handled
+            1 => self = Self::expand_from_other::<D, 1>(self, query_map),
+            2 => self = Self::expand_from_other::<D, 2>(self, query_map),
+            3 => self = Self::expand_from_other::<D, 3>(self, query_map),
+            4 => self = Self::expand_from_other::<D, 4>(self, query_map),
+            5 => self = Self::expand_from_other::<D, 5>(self, query_map),
+            6 => self = Self::expand_from_other::<D, 6>(self, query_map),
+            7 => self = Self::expand_from_other::<D, 7>(self, query_map),
+            8 => self = Self::expand_from_other::<D, 8>(self, query_map),
+            _ => self = Self::expand_from_other::<D, 16>(self, query_map),
+        }
+
+        self
     }
 
     #[inline(always)]
@@ -105,7 +172,7 @@ impl <const D: usize>RadixMap<D> {
     }
 
 
-    pub fn expand_from_other<const O: usize>(mut other: RadixMap<O>, qm: QueryMap) -> Self {
+    pub fn expand_from_other<const O: usize, const N: usize>(mut other: RadixMap<O>, qm: QueryMap) -> Self {
         let mut new_self = Self::default();
         // copy existing bits
         for i in 0..O {

@@ -1,12 +1,12 @@
 
-use std::{fmt, ops::Deref, sync::{Arc, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak}, vec};
+use std::{fmt, iter::Enumerate, ops::Deref, sync::{Arc, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak}, vec};
 use croaring::Bitmap;
 use pyo3::prelude::*;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
-use crate::index::{HybridHashmap, Indexable, PyQueryExpr, core::structures::hybrid_set::{HybridSet, HybridSetOps}, interfaces::filtered_index::FilteredIndex, types::DEFAULT_INDEXABLE_ARC};
+use crate::index::{HybridHashmap, Indexable, PyQueryExpr, core::structures::{hybrid_set::{HybridSet, HybridSetOps}, string_interner::{INTERNER, StrInternerView}}, interfaces::filtered_index::FilteredIndex, types::{DEFAULT_INDEXABLE_ARC, IndexTree, StrId}};
 use crate::index::core::query::{QueryMap, attr_parts, evaluate_query, filter_index_by_hashes, kwargs_to_hash_query};
 
 use crate::index::core::stored_item::StoredItem;
@@ -16,7 +16,7 @@ const QUERY_DEPTH_LEN: usize = 12;
 
 #[derive(Clone, Default)]
 pub struct IndexAPI{
-    pub index: Arc<RwLock<FxHashMap<SmolStr, Box<QueryMap>>>>,
+    pub index: IndexTree,
     pub items: Arc<RwLock<Vec<StoredItem>>>,
     pub allowed_items: Arc<RwLock<Bitmap>>,
     pub parent_index: Option<Weak<IndexAPI>>,
@@ -26,7 +26,7 @@ impl IndexAPI{
 
     pub fn new(parent_index: Option<Weak<IndexAPI>>) -> Self {
         Self {
-            index: Arc::new(RwLock::new(FxHashMap::default())),
+            index: Arc::new(RwLock::new(vec![])),
             items: Arc::new(RwLock::new(vec![])),
             allowed_items: Arc::new(RwLock::new(Bitmap::new())),
             parent_index: parent_index,
@@ -100,7 +100,7 @@ impl IndexAPI{
             allowed.add(rust_handle.id);
             self.store_item(py_handle, rust_handle.clone());
             for (key, value) in (*rust_handle.get_py_values()).iter(){
-                if key.starts_with("_"){continue;}
+                // if key.starts_with("_"){continue;}
                 self.add_index(weak_self.clone(), rust_handle.id, key.clone(), value);
             }
         }
@@ -127,7 +127,7 @@ impl IndexAPI{
         weak_self: Weak<IndexAPI>,
         idx: u32,
         stored_item: StoredItem,
-        py_val_hashmap: MutexGuard<HybridHashmap<SmolStr, PyValue>>
+        py_val_hashmap: MutexGuard<HybridHashmap<StrId, PyValue>>
     ) {
 
         self.get_allowed_items_writer().add(idx);
@@ -140,9 +140,9 @@ impl IndexAPI{
             items_writer[idx as usize] = stored_item;
         }
 
-        for (key, value) in py_val_hashmap.iter() {
-            if key.starts_with("_"){continue;}
-            self.add_index(weak_self.clone(), idx, key.clone(), value);
+        for (attr_id, value) in py_val_hashmap.iter() {
+            // if key.starts_with("_"){continue;}
+            self.add_index(weak_self.clone(), idx, *attr_id, value);
         }
     }
 
@@ -156,8 +156,8 @@ impl IndexAPI{
                 drop(writer);
 
                 for (key, value) in (*item.get_py_values()).iter(){
-                    if key.starts_with("_"){continue;}
-                    self.remove_index(item_id, &key, value);
+                    // if key.starts_with("_"){continue;}
+                    self.remove_index(item_id, *key as usize, value);
                 }
 
                 self.get_allowed_items_writer().remove(item_id);
@@ -178,7 +178,7 @@ impl IndexAPI{
         let survivors = HybridSet::Large(survivors);
 
         // Step 1: Remove items not in survivors
-        for attr_map in index.values_mut() {
+        for attr_map in index.iter() {
             attr_map.remove(&survivors);
         }
 
@@ -190,14 +190,20 @@ impl IndexAPI{
 
             let py_item = item.borrow_py_ref(py);
             
-            for (attr, val) in (*py_item.get_py_values()).iter() {
-                if attr.starts_with("_") {
-                    continue;
+            for (attr_id, val) in (*py_item.get_py_values()).iter() {
+//                if attr.starts_with("_") {
+//                    continue;
+//                }
+                match index.get_mut(*attr_id as usize){
+                    Some(val_map) => {
+                        val_map.insert(&val, idx);
+                    },
+                    None => {
+                        let qmap = QueryMap::new(self_arc.clone(), *attr_id);
+                        qmap.insert(&val, idx);
+                        index.insert(*attr_id as usize, Box::new(qmap));
+                    }
                 }
-                index
-                    .entry(attr.clone())
-                    .or_insert_with(|| Box::new(QueryMap::new(self_arc.clone(), attr.clone())))
-                    .insert(&val, idx);
             }
         }
 
@@ -240,13 +246,8 @@ impl IndexAPI{
     }
 
     pub fn union_with(&self, other: &IndexAPI) -> PyResult<()>{
-        let mut self_index = self.index.write().unwrap();
+        let self_index = self.index.write().unwrap();
         let other_index = other.index.read().unwrap();
-
-        for (attr, val_map) in other_index.iter() {
-            let self_val_map = self_index.entry(attr.clone()).or_default();
-            self_val_map.merge(val_map);
-        }
 
         Ok(())
     }
@@ -254,8 +255,9 @@ impl IndexAPI{
     pub fn group_by(&self, attr: SmolStr) -> Option<SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]>> {
         let index = self.get_index_reader();
         let (first_attr, _) = attr_parts(attr.clone());
+        let first_attr_id = INTERNER.intern(&first_attr);
 
-        if let Some(attr_map) = index.get(&first_attr){
+        if let Some(attr_map) = index.get(first_attr_id as usize){
             attr_map.group_by(attr)
         } else {
             None
@@ -280,17 +282,17 @@ impl IndexAPI{
     pub fn update_index(
         &self,
         weak_self: Weak<IndexAPI>,
-        attr: SmolStr, 
+        attr: StrId, 
         old_pv: Option<&PyValue>,
         new_pv: &PyValue,
         item_id: u32,
     ) {
-        if attr.starts_with("_") {
-            return;
-        }
+//        if attr.starts_with("_") {
+//            return;
+//        }
         
         if let Some(old_val) = old_pv {
-            self.remove_index(item_id, &attr, old_val);
+            self.remove_index(item_id, attr as usize, old_val);
         }
         self.add_index(weak_self, item_id, attr, &new_pv);
     }
@@ -308,36 +310,41 @@ impl IndexAPI{
         &self,
         weak_self: Weak<IndexAPI>,
         obj_id: u32,
-        attr: SmolStr,
+        attr_id: StrId,
         value: &PyValue
     ){
-        if let Some(qmap) = self.get_index_reader().get(&attr) {
+        if let Some(qmap) = self.get_index_reader().get(attr_id as usize) {
             qmap.insert(value, obj_id);
             return;
         }
 
-        let qmap = QueryMap::new(weak_self, attr.clone());
+        let qmap = QueryMap::new(weak_self, attr_id);
         qmap.insert(value, obj_id);
-        self.get_index_writer().insert(attr, Box::new(qmap));
+        let mut writer = self.get_index_writer();
+
+        if attr_id >= writer.len() as u32 {
+            writer.resize_with((attr_id + 1) as usize, Default::default); // or None if Option
+        }
+        writer[attr_id as usize] = Box::new(qmap);
 
     }
 
     fn remove_index(
         &self,
         idx: u32,
-        attr: &str, 
+        attr_id: usize,
         py_value: &PyValue
     ){
         let index = self.get_index_reader();
-        if index.contains_key(attr){
-            if let Some(val) = index.get(attr) { 
+        if index.len() > attr_id {
+            if let Some(val) = index.get(attr_id) { 
                 val.remove_id(py_value, idx);
                 val.check_prune(py_value);
             };
 
-            if index[attr].is_empty(){
+            if index[attr_id].is_empty(){
                 drop(index);
-                self.get_index_writer().remove(attr);
+                self.get_index_writer()[attr_id] = Default::default();
             }
         }
     }
@@ -350,11 +357,11 @@ impl IndexAPI{
         }
     }
 
-    pub fn is_attr_equal(&self, id: usize, attr: &str, val: &PyValue) -> bool {
+    pub fn is_attr_equal(&self, id: usize, str_id: StrId, val: &PyValue) -> bool {
         self.get_items_reader()
             .get(id)
             .and_then(|item| {
-                item.with_attr(attr, |py_val| py_val == val)
+                item.with_attr_id(str_id, |py_val| py_val == val)
             })
             .unwrap_or(false)
     }
@@ -369,12 +376,12 @@ impl IndexAPI{
         //self.items.try_read().expect("cannot read from items")
     }
 
-    pub fn get_index_writer(&self) -> RwLockWriteGuard<FxHashMap<SmolStr, Box<QueryMap>>> {
+    pub fn get_index_writer(&self) -> RwLockWriteGuard<Vec<Box<QueryMap>>> {
         self.index.write().unwrap()
         //self.index.try_write().expect("index writer deadlock")
     }
 
-    pub fn get_index_reader(&self) -> RwLockReadGuard<FxHashMap<SmolStr, Box<QueryMap>>> {
+    pub fn get_index_reader(&self) -> RwLockReadGuard<Vec<Box<QueryMap>>> {
         self.index.read().unwrap()
         //self.index.try_read().expect("cannot read from index")
     }

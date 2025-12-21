@@ -2,14 +2,13 @@ use std::{ptr::NonNull, sync::{Arc, Mutex}};
 
 use arc_swap::ArcSwap;
 
-use crate::index::core::structures::string_interner::{ImmutableInterner, MutableInterner, immutable_interner::StrId};
+use crate::index::{core::structures::string_interner::{ImmutableInterner, MutableInterner}, types::StrId};
 
 
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct InternedStr {
-    pub(crate) ptr: NonNull<u8>,
-    pub(crate) len: u32,
+    pub(crate) ptr: Arc<[u8]>,
 }
 
 pub struct StrInterner {

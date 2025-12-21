@@ -1,10 +1,13 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use once_cell::sync::{Lazy, OnceCell};
 use pyo3::{Py, PyAny, PyTypeInfo, Python, types::{PyAnyMethods, PyType}};
 use smallvec::SmallVec;
 
-use crate::index::{HybridHashmap, Indexable, core::index::IndexAPI};
+use crate::index::{HybridHashmap, Indexable, core::{index::IndexAPI, query::QueryMap}};
+
+pub type StrId = u32;
+pub type IndexTree = Arc<RwLock<Vec<Box<QueryMap>>>>;
 
 // devaults
 pub static DEFAULT_INDEX_ARC: Lazy<Arc<IndexAPI>> = Lazy::new(|| Arc::new(IndexAPI::new(None)));

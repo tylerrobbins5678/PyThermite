@@ -17,7 +17,10 @@ use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyDict, PyList, PyString}, 
 
 use smol_str::SmolStr;
 
+use crate::index::core::structures::string_interner::INTERNER;
+use crate::index::core::structures::string_interner::StrInternerView;
 use crate::index::types::DEFAULT_INDEX_ARC;
+use crate::index::types::StrId;
 use crate::index::value::PyValue;
 use crate::index::HybridHashmap;
 use crate::index::core::index::IndexAPI;
@@ -50,7 +53,7 @@ struct IndexMeta{
 #[pyclass(subclass, freelist = 512)]
 pub struct Indexable{
     meta: Arc<Mutex<SmallVec<[IndexMeta; 4]>>>,
-    pub py_values: Arc<Mutex<HybridHashmap<SmolStr, PyValue>>>,
+    pub py_values: Arc<Mutex<HybridHashmap<StrId, PyValue>>>,
     pub id: u32,
     pub recycle_id_on_drop: bool
 }
@@ -65,14 +68,15 @@ impl Indexable{
         _args: &Bound<'_, PyAny>, kwargs: Option<&Bound<'_, PyDict>>
     ) -> Self {
 
-        let mut py_values: HybridHashmap<SmolStr, PyValue>;
+        let mut py_values: HybridHashmap<StrId, PyValue>;
+        let mut interner = StrInternerView::new(&INTERNER);
 
         if let Some(dict) = kwargs {
             py_values = HybridHashmap::Small(SmallVec::new());
             for (key, value) in dict.iter() {
                 if let Ok(key_str) = key.extract::<&str>() {
-                    let key_string = SmolStr::new(key_str);
-                    py_values.insert(key_string, PyValue::new(value));
+                    let key_id: StrId = interner.intern(key_str);
+                    py_values.insert(key_id, PyValue::new(value));
                 }
             }
         } else {
@@ -92,20 +96,22 @@ impl Indexable{
         let val: PyValue = PyValue::new(value);
 
         py.allow_threads(||{
+            let mut interner = StrInternerView::new(&INTERNER);
             for ind in self.meta.lock().unwrap().iter() {
                 if let Some(full_index) = ind.index.upgrade() {
-
-                    if let Some(old_val) = self.get_py_values().get(name){
-                        full_index.update_index(ind.index.clone(), SmolStr::new(name), Some(old_val), &val, self.id);
+                    let name_id = interner.intern(name);
+                    if let Some(old_val) = self.get_py_values().get(&name_id){
+                        full_index.update_index(ind.index.clone(), name_id, Some(old_val), &val, self.id);
                     } else {
-                        full_index.update_index(ind.index.clone(), SmolStr::new(name), None, &val, self.id);
+                        full_index.update_index(ind.index.clone(), name_id, None, &val, self.id);
                     }
                 }
             }
         });
 
         // update value
-        self.py_values.lock().unwrap().insert(SmolStr::new(name), val);
+        let str_id: StrId = INTERNER.intern(name);
+        self.py_values.lock().unwrap().insert(str_id, val);
         Ok(())
     }
 
@@ -116,7 +122,8 @@ impl Indexable{
             Err(_) => return Err(PyAttributeError::new_err("Invalid attribute name")),
         };
         let py_values = self_.get_py_values();
-        if let Some(value) = py_values.get(name_str) {
+
+        if let Some(value) = py_values.get(&INTERNER.intern(name_str)) {
             Ok(value.get_obj(py))
         } else {
             drop(py_values);
@@ -132,8 +139,9 @@ impl Indexable{
     fn __dir__(py_ref: PyRef<Self>, py: Python<'_>) -> PyResult<Py<PyList>> {
         let mut names: Vec<PyObject> = vec![];
         {
-            for key in py_ref.get_py_values().keys() {
-                names.push(PyString::new(py, key).into_py_any(py).unwrap());
+            let interner = StrInternerView::new(&INTERNER);
+            for key_id in py_ref.get_py_values().keys() {
+                names.push(PyString::new(py, interner.resolve(*key_id)).into_py_any(py).unwrap());
             }
         }
 
@@ -197,16 +205,16 @@ impl Indexable {
         Self::trim_indexes(&mut meta_lock, index);
     }
 
-    pub fn get_py_values(&self) -> MutexGuard<'_, HybridHashmap<SmolStr, PyValue>>{
+    pub fn get_py_values(&self) -> MutexGuard<'_, HybridHashmap<StrId, PyValue>>{
         self.py_values.lock().unwrap()
     }
 
-    pub fn with_attr<F, R>(&self, key: &str, f: F) -> Option<R>
+    pub fn with_attr_id<F, R>(&self, str_id: StrId, f: F) -> Option<R>
     where
         F: FnOnce(&PyValue) -> R
     {
         let guard = self.get_py_values();
-        guard.get(key).map(f)
+        guard.get(&str_id).map(f)
     }
 }
 

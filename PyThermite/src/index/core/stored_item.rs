@@ -1,7 +1,7 @@
 use pyo3::{Bound, IntoPyObject, Py, PyAny, PyRef, Python};
 use std::{hash::{Hash, Hasher}, sync::{Arc, Weak}};
 
-use crate::index::{core::{index::IndexAPI, structures::hybrid_set::{HybridSet, HybridSetOps}}, types::{DEFAULT_INDEX_ARC, DEFAULT_INDEXABLE_ARC, DEFAULT_PY_INDEXABLE_ARC, DEFAULT_PY_NONE_ARC}, value::PyValue};
+use crate::index::{core::{index::IndexAPI, structures::hybrid_set::{HybridSet, HybridSetOps}}, types::{DEFAULT_INDEX_ARC, DEFAULT_INDEXABLE_ARC, DEFAULT_PY_INDEXABLE_ARC, DEFAULT_PY_NONE_ARC, StrId}, value::PyValue};
 use crate::index::Indexable;
 
 #[derive(Clone, Debug)]
@@ -77,11 +77,11 @@ impl<'py> StoredItem {
         }
     }
 
-    pub fn with_attr<F, R>(&self, attr: &str, f: F) -> Option<R>
+    pub fn with_attr_id<F, R>(&self, str_id: StrId, f: F) -> Option<R>
     where
         F: FnOnce(&PyValue) -> R,
     {
-        self.owned_py_item.with_attr(attr, f)
+        self.owned_py_item.with_attr_id(str_id, f)
     }
 
     pub fn get_owned_handle(&self) -> &Arc<Indexable> {

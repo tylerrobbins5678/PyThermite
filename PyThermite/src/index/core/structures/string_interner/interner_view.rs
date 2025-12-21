@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arc_swap::Guard;
 
-use crate::index::core::structures::string_interner::{ImmutableInterner, StrInterner, immutable_interner::StrId};
+use crate::index::{core::structures::string_interner::{ImmutableInterner, StrInterner}, types::StrId};
 
 
 

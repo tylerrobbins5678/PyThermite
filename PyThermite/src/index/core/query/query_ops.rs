@@ -8,7 +8,7 @@ use ordered_float::OrderedFloat;
 use pyo3::{PyAny, PyResult, types::{PyAnyMethods, PyString}};
 use smol_str::SmolStr;
 
-use crate::index::{core::{structures::hybrid_set::{HybridSet, HybridSetOps}, query::QueryMap}, interfaces::PyQueryExpr, value::{PyValue, RustCastValue}};
+use crate::index::{core::{query::QueryMap, structures::{hybrid_set::{HybridSet, HybridSetOps}, string_interner::{INTERNER, StrInternerView}}}, interfaces::PyQueryExpr, types::StrId, value::{PyValue, RustCastValue}};
 use crate::index::core::query::b_tree::Key;
 
 impl QueryMap {
@@ -174,22 +174,24 @@ impl QueryMap {
 }
 
 pub fn filter_index_by_hashes(
-    index: &FxHashMap<SmolStr, Box<QueryMap>>,
+    index: &Vec<Box<QueryMap>>,
     query: &FxHashMap<SmolStr, HashSet<PyValue>>,
 ) -> Bitmap {
     let mut sets_iter: Bitmap = Bitmap::new();
     let mut first = true;
     
     let mut per_attr_match: Bitmap = Bitmap::new();
+    let mut interner = StrInternerView::new(&INTERNER);
 
     for (attr, allowed_hashes) in query.iter() {
+        let attr_id = interner.intern(attr) as usize;
         per_attr_match.clear();
 
 
-        if let None = index.get(attr) {
+        if let None = index.get(attr_id) {
             return Bitmap::new();
         } 
-        let attr_map = &index[attr];
+        let attr_map = &index[attr_id];
         
         for h in allowed_hashes {
             if let Some(matched) = attr_map.exact.get(h) {
@@ -248,14 +250,15 @@ pub fn evaluate_nested_query(
 }
 
 pub fn evaluate_query(
-    index: &FxHashMap<SmolStr, Box<QueryMap>>,
+    index: &Vec<Box<QueryMap>>,
     all_valid: &Bitmap,
     expr: &QueryExpr,
 ) -> Bitmap {
     match expr {
         QueryExpr::Eq(attr, value) => {
             let (base_attr, nested_attr) = attr_parts(attr.clone());
-            if let Some(qm) = index.get(&base_attr){
+            let base_attr_id = INTERNER.intern(&base_attr) as usize;
+            if let Some(qm) = index.get(base_attr_id){
                 if let Some(nested_attr) = nested_attr {
                     let query = QueryExpr::Eq(nested_attr, value.clone());
                     evaluate_nested_query(qm, &query)
@@ -276,7 +279,8 @@ pub fn evaluate_query(
         QueryExpr::In(attr, values) => {
             let (base_attr, nested_attr) = attr_parts(attr.clone());
             let mut result;
-            if let Some(qm) = index.get(&base_attr) {
+            let base_attr_id = INTERNER.intern(&base_attr) as usize;
+            if let Some(qm) = index.get(base_attr_id) {
                 
                 if let Some(nested_attr) = nested_attr {
                     let query = QueryExpr::In(nested_attr, values.clone());
@@ -301,7 +305,8 @@ pub fn evaluate_query(
         }
         QueryExpr::Gt(attr, value) => {
             let (base_attr, nested_attr) = attr_parts(attr.clone());
-            if let Some(qm) = index.get(&base_attr) {
+            let base_attr_id = INTERNER.intern(&base_attr) as usize;
+            if let Some(qm) = index.get(base_attr_id) {
                 if let Some(nested_attr) = nested_attr {
                     let query = QueryExpr::Gt(nested_attr, value.clone());
                     evaluate_nested_query(qm, &query)
@@ -314,7 +319,8 @@ pub fn evaluate_query(
         }
         QueryExpr::Ge(attr, value) => {
             let (base_attr, nested_attr) = attr_parts(attr.clone());
-            if let Some(qm) = index.get(&base_attr) {
+            let base_attr_id = INTERNER.intern(&base_attr) as usize;
+            if let Some(qm) = index.get(base_attr_id) {
                 if let Some(nested_attr) = nested_attr {
                     let query = QueryExpr::Ge(nested_attr, value.clone());
                     evaluate_nested_query(qm, &query)
@@ -327,7 +333,8 @@ pub fn evaluate_query(
         }
         QueryExpr::Le(attr, value) => {
             let (base_attr, nested_attr) = attr_parts(attr.clone());
-            if let Some(qm) = index.get(&base_attr) {
+            let base_attr_id = INTERNER.intern(&base_attr) as usize;
+            if let Some(qm) = index.get(base_attr_id) {
                 if let Some(nested_attr) = nested_attr {
                     let query = QueryExpr::Le(nested_attr, value.clone());
                     evaluate_nested_query(qm, &query)
@@ -340,7 +347,8 @@ pub fn evaluate_query(
         }
         QueryExpr::Lt(attr, value) => {
             let (base_attr, nested_attr) = attr_parts(attr.clone());
-            if let Some(qm) = index.get(&base_attr) {
+            let base_attr_id = INTERNER.intern(&base_attr) as usize;
+            if let Some(qm) = index.get(base_attr_id) {
                 if let Some(nested_attr) = nested_attr {
                     let query = QueryExpr::Lt(nested_attr, value.clone());
                     evaluate_nested_query(qm, &query)
@@ -353,7 +361,8 @@ pub fn evaluate_query(
         }
         QueryExpr::Bt(attr, lower, upper) => {
             let (base_attr, nested_attr) = attr_parts(attr.clone());
-            if let Some(qm) = index.get(&base_attr) {
+            let base_attr_id = INTERNER.intern(&base_attr) as usize;
+            if let Some(qm) = index.get(base_attr_id) {
                 if let Some(nested_attr) = nested_attr {
                     let query = QueryExpr::Bt(nested_attr, lower.clone(), upper.clone());
                     evaluate_nested_query(qm, &query)
@@ -397,7 +406,7 @@ pub fn evaluate_query(
 }
 
 pub fn evaluate_queries_vec(
-    index: &FxHashMap<SmolStr, Box<QueryMap>>,
+    index: &Vec<Box<QueryMap>>,
     all_valid: &Bitmap,
     exprs: &Vec<QueryExpr>,
 ) -> Vec<Bitmap> {

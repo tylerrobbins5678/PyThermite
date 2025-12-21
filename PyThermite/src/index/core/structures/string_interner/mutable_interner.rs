@@ -1,10 +1,10 @@
-use std::{hash::BuildHasherDefault, ptr::NonNull};
+use std::{hash::BuildHasherDefault, ptr::NonNull, sync::Arc};
 
 use bumpalo::Bump;
 use hashbrown::HashMap;
 use rustc_hash::FxHasher;
 use smallvec::SmallVec;
-use crate::index::core::structures::string_interner::{ImmutableInterner, InternedStr, immutable_interner::StrId};
+use crate::index::{core::structures::string_interner::{ImmutableInterner, InternedStr}, types::StrId};
 
 type FxBuildHasher = BuildHasherDefault<FxHasher>;
 
@@ -30,18 +30,17 @@ impl MutableInterner {
         let entry = self.table.entry((hash, len)).or_default();
 
         for &id in entry.iter() {
-            let stored = unsafe { self.strings.get_unchecked(id as usize) };
-            let bytes = unsafe { std::slice::from_raw_parts(stored.ptr.as_ptr(), stored.len as usize) };
+            let stored = &self.strings[id as usize];
+            let bytes: &[u8] = &stored.ptr;
             if bytes == s.as_bytes() {
                 return id;
             }
         }
 
-        let dst = self.arena.alloc_slice_copy(s.as_bytes());
-        let ptr = unsafe { NonNull::new_unchecked(dst.as_ptr() as *mut u8) };
+        let ptr = Arc::from(s.as_bytes());
 
         let id = self.strings.len() as StrId;
-        self.strings.push(InternedStr { ptr, len });
+        self.strings.push(InternedStr { ptr });
         entry.push(id);
 
         id

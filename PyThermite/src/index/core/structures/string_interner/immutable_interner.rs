@@ -8,9 +8,9 @@ use std::hash::BuildHasherDefault;
 use rustc_hash::FxHasher;
 
 use crate::index::core::structures::string_interner::InternedStr;
+use crate::index::types::StrId;
 
 type FxBuildHasher = BuildHasherDefault<FxHasher>;
-pub type StrId = u32;
 
 pub struct ImmutableInterner {
     pub(crate) strings: Vec<InternedStr>,
@@ -19,8 +19,8 @@ pub struct ImmutableInterner {
 
 impl ImmutableInterner {
     pub(crate) fn resolve(&self, id: StrId) -> &str {
-        let s = unsafe { self.strings.get_unchecked(id as usize) };
-        let bytes = unsafe { std::slice::from_raw_parts(s.ptr.as_ptr(), s.len as usize) };
+        let stored = &self.strings[id as usize];
+        let bytes: &[u8] = &stored.ptr;
         unsafe { std::str::from_utf8_unchecked(bytes) }
     }
 
@@ -30,8 +30,8 @@ impl ImmutableInterner {
 
         self.table.get(&(hash, len)).and_then(|bucket| {
             for &id in bucket.iter() {
-                let stored = unsafe { self.strings.get_unchecked(id as usize) };
-                let bytes = unsafe { std::slice::from_raw_parts(stored.ptr.as_ptr(), stored.len as usize) };
+                let stored = &self.strings[id as usize];
+                let bytes: &[u8] = &stored.ptr;
                 if bytes == s.as_bytes() {
                     return Some(id);
                 }
