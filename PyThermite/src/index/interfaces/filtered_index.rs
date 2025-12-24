@@ -88,7 +88,7 @@ impl FilteredIndex{
                     None => {
                         let qmap = QueryMap::new(res_index_arc.clone(), *attr_id);
                         qmap.insert(&val, idx);
-                        new_index.insert(*attr_id as usize, Box::new(qmap));
+                        new_index.insert(*attr_id as usize, qmap);
                     }
                 }
             }

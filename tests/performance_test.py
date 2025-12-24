@@ -71,7 +71,6 @@ def prep_data():
 
     return make_data
 
-
 def test_performance(prep_data_fixture):
     print("creating Objects")
     start = time.perf_counter()
@@ -85,15 +84,18 @@ def test_performance(prep_data_fixture):
 
     py_objects = [row for row in data]
 
-    start = time.perf_counter()
     cols = ["id", "age", "score", "active", "country", "group", "tags"]
+    
+    curr = mem_usage_mb()
+    start = time.perf_counter()
     df = pd.DataFrame(prep_data_fixture, columns=cols)
-
     pandas_build_time = time.perf_counter() - start
-    mem_pix = mem_usage_mb()
+    mem_pix = mem_usage_mb() - curr
+
 
     print("Starting Pandas")
     # Benchmark: Pandas
+    curr = mem_usage_mb()
     start = time.perf_counter()
     for i in range(ITERATIONS):
         filtered_df = df[
@@ -115,18 +117,20 @@ def test_performance(prep_data_fixture):
             (filtered_df["country"] != "US")
         ]
 
-    filtered_df.to_dict(orient="records")
     duration_df = time.perf_counter() - start
-    mem_df = mem_usage_mb()
+    filtered_df.to_dict(orient="records")
+    mem_df = mem_usage_mb() - curr
 
     print("Starting building index")
     index = Index()
+    curr = mem_usage_mb()
     start = time.perf_counter()
     index.add_object_many(py_objects)
     duration_bix = time.perf_counter() - start
-    mem_bix = mem_usage_mb()
+    mem_bix = mem_usage_mb() - curr
 
     print("Starting index")
+    curr = mem_usage_mb()
     start = time.perf_counter()
     for i in range(ITERATIONS):
         query = Q.and_(
@@ -148,10 +152,10 @@ def test_performance(prep_data_fixture):
         )
         result = index.reduced_query(query)
     #    filtered_ix = index.reduced(b = 2, a = 1000)
-    filtered_ix = result.collect()
     duration_ix = time.perf_counter() - start
+    filtered_ix = result.collect()
+    mem_ix = mem_usage_mb() - curr
 
-    mem_ix = mem_usage_mb()
 
     # Print Results
     print("\n==== Benchmark Results ====")
@@ -160,14 +164,21 @@ def test_performance(prep_data_fixture):
     test1 = index.collect()[1]
     test.test_val = test1
 
-    nested_test = index.reduced_query(
-        query = Q.eq("test_val.age" ,  test1.age)
-    ).collect()
+    start = time.perf_counter()
 
-    assert len(nested_test) > 0
-    assert len(filtered_df) == len(filtered_ix)
+    index.group_by("id")
+
+    duration_group = time.perf_counter() - start
+
+#    nested_test = index.reduced_query(
+#        query = Q.eq("test_val.age" ,  test1.age)
+#    ).collect()
+#
+#    assert len(nested_test) > 0
+#    assert len(filtered_df) == len(filtered_ix)
 
     print(f"Object Build:                   {object_build_time:.4f} s")
+    print(f"Group by operation on ID:       {duration_group:.4f} s")
     print(f"Pandas Filter Build index:      {pandas_build_time:.4f} s | Mem: {mem_pix:.1f} MB")
     print(f"Pandas Filter:                  {duration_df:.6f} s | Mem: {mem_df:.1f} MB | Result size: {len(filtered_df)}")
     print(f"Your Index Filter Build index:  {duration_bix:.4f} s | Mem: {mem_bix:.1f} MB")

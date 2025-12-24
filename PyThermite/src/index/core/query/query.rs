@@ -44,15 +44,15 @@ impl QueryMap {
         }
     }
 
+    #[inline(always)]
     fn insert_exact(&self, value: &PyValue, obj_id: u32){
         let mut shard = self.exact.get_shard(&value);
-        let entry = shard.entry(value.clone());
-        match entry {
-            Entry::Occupied(mut o) => {
-                o.get_mut().add(obj_id);
+        match shard.get_mut (value) {
+            Some(hs) => {
+                hs.add(obj_id);
             }
-            Entry::Vacant(v) => {
-                v.insert(HybridSet::of(&[obj_id]));
+            None => {
+                shard.insert(value.clone(), HybridSet::of(&[obj_id]));
             }
         }
     }
@@ -130,6 +130,7 @@ impl QueryMap {
         });
     }
 
+    #[inline(always)]
     pub fn insert(&self, value: &PyValue, obj_id: u32){
         // Insert into the right ordered map based on primitive type
         match &value.get_primitive() {

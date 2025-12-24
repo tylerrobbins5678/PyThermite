@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 use crate::index::{HybridHashmap, Indexable, core::{index::IndexAPI, query::QueryMap}};
 
 pub type StrId = u32;
-pub type IndexTree = Arc<RwLock<Vec<Box<QueryMap>>>>;
+pub type IndexTree = Arc<RwLock<Vec<QueryMap>>>;
 
 // devaults
 pub static DEFAULT_INDEX_ARC: Lazy<Arc<IndexAPI>> = Lazy::new(|| Arc::new(IndexAPI::new(None)));

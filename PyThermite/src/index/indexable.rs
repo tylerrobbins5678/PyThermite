@@ -190,6 +190,8 @@ impl Indexable {
             }
         });
     }
+
+    #[inline(always)]
     pub fn add_index(&self, index: Weak<IndexAPI>) {
         let mut meta_lock: MutexGuard<'_, SmallVec<[IndexMeta; 4]>> = self.meta.lock().unwrap();
         meta_lock.push(IndexMeta {

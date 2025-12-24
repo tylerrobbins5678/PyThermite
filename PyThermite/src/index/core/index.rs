@@ -95,17 +95,17 @@ impl IndexAPI{
         let mut allowed = Bitmap::new();
 
         for (rust_handle, py_handle) in raw_objs {
-            let rust_handle = Arc::new(rust_handle);
             rust_handle.add_index(weak_self.clone());
             allowed.add(rust_handle.id);
+            let rust_handle = Arc::new(rust_handle);
             self.store_item(py_handle, rust_handle.clone());
-            for (key, value) in (*rust_handle.get_py_values()).iter(){
+            for (key, value) in rust_handle.get_py_values().iter(){
                 // if key.starts_with("_"){continue;}
-                self.add_index(weak_self.clone(), rust_handle.id, key.clone(), value);
+                self.add_index(weak_self.clone(), rust_handle.id, *key, value);
             }
         }
 
-        let mut allowed_writer = self.get_allowed_items_writer();
+        let mut allowed_writer: RwLockWriteGuard<'_, Bitmap> = self.get_allowed_items_writer();
         allowed_writer.or_inplace(&allowed);
     }
 
@@ -201,7 +201,7 @@ impl IndexAPI{
                     None => {
                         let qmap = QueryMap::new(self_arc.clone(), *attr_id);
                         qmap.insert(&val, idx);
-                        index.insert(*attr_id as usize, Box::new(qmap));
+                        index.insert(*attr_id as usize, qmap);
                     }
                 }
             }
@@ -246,8 +246,21 @@ impl IndexAPI{
     }
 
     pub fn union_with(&self, other: &IndexAPI) -> PyResult<()>{
-        let self_index = self.index.write().unwrap();
-        let other_index = other.index.read().unwrap();
+        let self_index = self.get_index_reader();
+        let other_index = other.get_index_reader();
+
+        if self_index.len() < other_index.len() {
+            let additional = other_index.len() - self_index.len();
+            drop(self_index);
+            let mut self_index = self.get_index_writer();
+            self_index.reserve(additional);
+            drop(self_index);
+        }
+        
+        let self_index = self.get_index_reader();
+        for (self_qm, other_qm) in self_index.iter().zip(other_index.iter()) {
+            self_qm.merge(other_qm);
+        }
 
         Ok(())
     }
@@ -325,7 +338,7 @@ impl IndexAPI{
         if attr_id >= writer.len() as u32 {
             writer.resize_with((attr_id + 1) as usize, Default::default); // or None if Option
         }
-        writer[attr_id as usize] = Box::new(qmap);
+        writer[attr_id as usize] = qmap;
 
     }
 
@@ -376,12 +389,12 @@ impl IndexAPI{
         //self.items.try_read().expect("cannot read from items")
     }
 
-    pub fn get_index_writer(&self) -> RwLockWriteGuard<Vec<Box<QueryMap>>> {
+    pub fn get_index_writer(&self) -> RwLockWriteGuard<Vec<QueryMap>> {
         self.index.write().unwrap()
         //self.index.try_write().expect("index writer deadlock")
     }
 
-    pub fn get_index_reader(&self) -> RwLockReadGuard<Vec<Box<QueryMap>>> {
+    pub fn get_index_reader(&self) -> RwLockReadGuard<Vec<QueryMap>> {
         self.index.read().unwrap()
         //self.index.try_read().expect("cannot read from index")
     }

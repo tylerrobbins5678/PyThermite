@@ -174,7 +174,7 @@ impl QueryMap {
 }
 
 pub fn filter_index_by_hashes(
-    index: &Vec<Box<QueryMap>>,
+    index: &Vec<QueryMap>,
     query: &FxHashMap<SmolStr, HashSet<PyValue>>,
 ) -> Bitmap {
     let mut sets_iter: Bitmap = Bitmap::new();
@@ -241,7 +241,7 @@ pub fn attr_parts(attr: SmolStr) -> (SmolStr, Option<SmolStr>) {
 }
 
 pub fn evaluate_nested_query(
-    nested_map: &Box<QueryMap>,
+    nested_map: &QueryMap,
     expr: &QueryExpr,
 ) -> Bitmap {
     let wrapper = PyQueryExpr{inner: expr.clone()};
@@ -250,7 +250,7 @@ pub fn evaluate_nested_query(
 }
 
 pub fn evaluate_query(
-    index: &Vec<Box<QueryMap>>,
+    index: &Vec<QueryMap>,
     all_valid: &Bitmap,
     expr: &QueryExpr,
 ) -> Bitmap {
@@ -406,7 +406,7 @@ pub fn evaluate_query(
 }
 
 pub fn evaluate_queries_vec(
-    index: &Vec<Box<QueryMap>>,
+    index: &Vec<QueryMap>,
     all_valid: &Bitmap,
     exprs: &Vec<QueryExpr>,
 ) -> Vec<Bitmap> {
