@@ -7,7 +7,7 @@ use crate::index::core::query::b_tree::{FULL_KEYS, Key, MAX_KEYS, composite_key:
 #[derive(Debug, Clone)]
 pub struct InternalNode {
     pub keys: [CompositeKey128; MAX_KEYS],
-    pub children: [Option<Box<BitMapBTreeNode>>; MAX_KEYS],
+    pub children: [Option<BitMapBTreeNode>; MAX_KEYS],
     pub children_bitmaps: [Option<Bitmap>; MAX_KEYS],
     pub num_keys: usize,
     pub offset: usize,
@@ -109,10 +109,11 @@ impl InternalNode {
             }
         };
 
-        let child = self.children[self.offset + idx].as_deref_mut().expect("Missing child");
+        let child = self.children[self.offset + idx].as_mut().expect("Missing child");
         let is_full = match child {
             BitMapBTreeNode::Leaf(leaf) => leaf.is_full(),
             BitMapBTreeNode::Internal(internal) => internal.is_full(),
+            BitMapBTreeNode::Empty => false,
         };
 
         if is_full {
@@ -133,14 +134,14 @@ impl InternalNode {
             Err(i) => if i == 0 { 0 } else { i - 1 }
         };
 
-        let node = self.children[self.offset + idx].as_deref_mut().expect("Missing child");
+        let node = self.children[self.offset + idx].as_mut().expect("Missing child");
 
         node.remove_composite_key(key)
     }
 
 
     fn insert_non_full(&mut self, key: CompositeKey128, index: usize){
-        match self.children[self.offset + index].as_deref_mut() {
+        match self.children[self.offset + index].as_mut() {
             Some(BitMapBTreeNode::Leaf(leaf)) => {
                 leaf.insert_non_full(key);
                 if let Some(bitmap) = &mut self.children_bitmaps[self.offset + index] {
@@ -158,6 +159,7 @@ impl InternalNode {
                 }
             }
             None => panic!("No child at index {}", index),
+            Some(BitMapBTreeNode::Empty) => panic!("Cannot insert into empty node"),
         }
 
         if self.offset == 0 || self.offset + self.num_keys == MAX_KEYS {
@@ -211,7 +213,7 @@ impl InternalNode {
 
 
     fn split_and_insert(&mut self, key: CompositeKey128, idx: usize) {
-        let left_node = self.children[self.offset + idx].as_deref_mut().unwrap();
+        let left_node = self.children[self.offset + idx].as_mut().unwrap();
         let (sep_key, mut new_node, mut new_bitmap) = match left_node {
             BitMapBTreeNode::Leaf(leaf) => {
                 let (k, right_leaf) = leaf.split();
@@ -223,14 +225,14 @@ impl InternalNode {
                 let bm = right_internal.get_bitmap();
                 (k, BitMapBTreeNode::Internal(Box::new(right_internal)), bm)
             }
+            BitMapBTreeNode::Empty => panic!("Cannot split empty node"),
         };
 
         // update current bitmap to include id since it was inserted into the child
-        let mut left_bitmap = self.children_bitmaps[self.offset + idx]
-            .as_ref()
-            .expect("Bitmap must be initialized before split")
-            - &new_bitmap;
-        
+        let mut left_bitmap =
+            self.children_bitmaps[self.offset + idx].take().unwrap();
+            left_bitmap.andnot_inplace(&new_bitmap);
+            
         if key <= sep_key {
             left_node.insert(key);
             left_bitmap.add(key.get_id());
@@ -253,7 +255,7 @@ impl InternalNode {
         insert = self.offset + idx + 1;
         // Insert separator key at idx - greater than current key
         self.keys[insert] = sep_key;
-        self.children[insert] = Some(Box::new(new_node));
+        self.children[insert] = Some(new_node);
         self.children_bitmaps[insert] = Some(new_bitmap);
 
         self.num_keys += 1;
@@ -317,7 +319,7 @@ impl InternalNode {
     pub fn least_key(&self) -> CompositeKey128 {
         self.keys[self.offset]
     }
-    
+
 }
 
 
@@ -359,9 +361,10 @@ impl<'a> Iterator for InternalNodeIter<'a> {
 
             // 3) Create iterator for next valid child
             if let Some(child) = &self.node.children[self.node.offset + self.child_idx] {
-                self.current_child_iter = Some(match child.as_ref() {
+                self.current_child_iter = Some(match child {
                     BitMapBTreeNode::Leaf(l) => Box::new(LeafNodeIter::new(l)),
                     BitMapBTreeNode::Internal(n) => Box::new(InternalNodeIter::new(n)),
+                    BitMapBTreeNode::Empty => Box::new(std::iter::empty()), // Empty iterator for empty nodes
                 });
             }
 

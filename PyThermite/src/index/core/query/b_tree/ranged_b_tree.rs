@@ -57,8 +57,8 @@ impl BitMapBTree {
                 new_root.keys[base_index + 1] = sep_key;
 
                 // Insert the two children
-                new_root.children[base_index] = Some(Box::new(BitMapBTreeNode::Leaf(left_leaf)));
-                new_root.children[base_index + 1] = Some(Box::new(BitMapBTreeNode::Leaf(Box::new(right_leaf))));
+                new_root.children[base_index] = Some(BitMapBTreeNode::Leaf(left_leaf));
+                new_root.children[base_index + 1] = Some(BitMapBTreeNode::Leaf(Box::new(right_leaf)));
 
                 // Initialize children bitmaps
                 new_root.children_bitmaps[base_index] = new_root.children[base_index].as_ref().map(|child| child.get_bitmap());
@@ -80,8 +80,8 @@ impl BitMapBTree {
                 new_root.keys[base_index] = left_internal.least_key();
                 new_root.keys[base_index + 1] = sep_key;
 
-                new_root.children[base_index] = Some(Box::new(BitMapBTreeNode::Internal(left_internal)));
-                new_root.children[base_index + 1] = Some(Box::new(BitMapBTreeNode::Internal(Box::new(right_internal))));
+                new_root.children[base_index] = Some(BitMapBTreeNode::Internal(left_internal));
+                new_root.children[base_index + 1] = Some(BitMapBTreeNode::Internal(Box::new(right_internal)));
 
                 new_root.children_bitmaps[base_index] = new_root.children[base_index].as_ref().map(|child| child.get_bitmap());
                 new_root.children_bitmaps[base_index + 1] = new_root.children[base_index + 1].as_ref().map(|child| child.get_bitmap());
@@ -90,6 +90,9 @@ impl BitMapBTree {
                 new_root.offset = base_index;
 
                 self.root = Box::new(BitMapBTreeNode::Internal(Box::new(new_root)));
+            }
+            BitMapBTreeNode::Empty => {
+                // Do nothing for empty root
             }
         }
     }
@@ -122,6 +125,7 @@ impl Default for BitMapBTree {
 pub enum BitMapBTreeNode {
     Internal(Box<InternalNode>),
     Leaf(Box<LeafNode>),
+    Empty,
 }
 
 impl BitMapBTreeNode {
@@ -129,6 +133,7 @@ impl BitMapBTreeNode {
         match self {
             BitMapBTreeNode::Leaf(leaf) => leaf.get_bitmap(),
             BitMapBTreeNode::Internal(internal) => internal.get_bitmap(),
+            BitMapBTreeNode::Empty => Bitmap::new(),
         }
     }
 
@@ -136,6 +141,7 @@ impl BitMapBTreeNode {
         match self {
             BitMapBTreeNode::Leaf(leaf) => leaf.is_full(),
             BitMapBTreeNode::Internal(internal) => internal.is_full(),
+            BitMapBTreeNode::Empty => false,
         }
     }
 
@@ -144,6 +150,9 @@ impl BitMapBTreeNode {
         match self {
             BitMapBTreeNode::Leaf(leaf) => leaf.insert_non_full(key),
             BitMapBTreeNode::Internal(internal) => internal.insert(key),
+            BitMapBTreeNode::Empty => {
+                panic!("Cannot insert into an empty node!");
+            }
         }
     }
 
@@ -156,6 +165,9 @@ impl BitMapBTreeNode {
         match self {
             BitMapBTreeNode::Leaf(leaf) => leaf.remove(key),
             BitMapBTreeNode::Internal(internal) => internal.remove(key),
+            BitMapBTreeNode::Empty => {
+                panic!("Cannot remove from an empty node!");
+            }
         }
     }
 
@@ -168,6 +180,9 @@ impl BitMapBTreeNode {
             BitMapBTreeNode::Internal(internal) => {
                 internal.query_range(lower, upper, allowed)
             }
+            BitMapBTreeNode::Empty => {
+                Bitmap::new()
+            }
         }
     }
 
@@ -175,6 +190,7 @@ impl BitMapBTreeNode {
         match self {
             BitMapBTreeNode::Internal(internal_node) => internal_node.least_key(),
             BitMapBTreeNode::Leaf(leaf_node) => leaf_node.least_key(),
+            BitMapBTreeNode::Empty => CompositeKey128::default(),
         }
     }
 
@@ -226,6 +242,9 @@ impl BitMapBTreeNode {
                     }
                 }
             }
+            BitMapBTreeNode::Empty => {
+                // Do nothing for empty nodes
+            }
         }
     }    
 
@@ -263,6 +282,9 @@ impl BitMapBTreeNode {
                     }
                 }
             }
+            BitMapBTreeNode::Empty => {
+                println!("{pad}<Empty Node>");
+            }
         }
     }
 }
@@ -281,6 +303,7 @@ impl<'a> BitMapBTreeIter<'a> {
         let inner = match tree.root.as_ref() {
             BitMapBTreeNode::Leaf(leaf) => BitMapBTreeNodeIter::Leaf(LeafNodeIter::new(leaf)),
             BitMapBTreeNode::Internal(internal) => BitMapBTreeNodeIter::Internal(InternalNodeIter::new(internal)),
+            BitMapBTreeNode::Empty => panic!("Cannot create iterator for empty tree!"),
         };
 
         Self { inner }
