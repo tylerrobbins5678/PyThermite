@@ -70,7 +70,7 @@ impl IndexAPI{
     }
 
     pub fn store_item(
-        items_writer: &mut RwLockWriteGuard<'_, Vec<StoredItem>>,
+        &self,
         py_handle: Py<Indexable>,
         rust_handle: Arc<Indexable>
     ) {
@@ -78,6 +78,7 @@ impl IndexAPI{
         let idx = rust_handle.id as usize;
         let stored_item = StoredItem::new(Arc::new(py_handle), rust_handle,None);
         
+        let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<StoredItem>> = self.get_items_writer();
         if items_writer.len() <= idx{
             items_writer.resize(idx * 2, StoredItem::default());
         }
@@ -92,13 +93,12 @@ impl IndexAPI{
     ) {
 
         let mut allowed = Bitmap::new();
-        let mut items_writer = self.get_items_writer();
 
         for (rust_handle, py_handle) in raw_objs {
             rust_handle.add_index(weak_self.clone());
             allowed.add(rust_handle.id);
             let rust_handle = Arc::new(rust_handle);
-            Self::store_item(&mut items_writer, py_handle, rust_handle.clone());
+            self.store_item(py_handle, rust_handle.clone());
             for (key, value) in rust_handle.get_py_values().iter(){
                 // if key.starts_with("_"){continue;}
                 self.add_index(weak_self.clone(), rust_handle.id, *key, value);
@@ -259,7 +259,6 @@ impl IndexAPI{
         
         let self_index = self.get_index_reader();
         for (self_qm, other_qm) in self_index.iter().zip(other_index.iter()) {
-            eprintln!("Merging attribute with {:p} and {:p}", self_qm, other_qm);
             self_qm.merge(other_qm);
         }
 
