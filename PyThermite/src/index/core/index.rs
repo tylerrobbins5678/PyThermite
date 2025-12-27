@@ -69,44 +69,43 @@ impl IndexAPI{
         guard[idx].get_path_to_root()
     }
 
-    pub fn store_item(
-        items_writer: &mut RwLockWriteGuard<'_, Vec<StoredItem>>,
-        py_handle: Py<Indexable>,
-        rust_handle: Arc<Indexable>
-    ) {
-
-        let idx = rust_handle.id as usize;
-        let stored_item = StoredItem::new(Arc::new(py_handle), rust_handle,None);
-        
-        if items_writer.len() <= idx{
-            items_writer.resize(idx * 2, StoredItem::default());
-        }
-
-        items_writer[idx] = stored_item;
-    }
-
     pub fn add_object_many(
         &self,
         weak_self: Weak<Self>,
         raw_objs: Vec<(Indexable, Py<Indexable>)>
     ) {
+        // 3 pass - wrap in ARC - add meta to index with locks - add to index maps which may call meta locks
+        let arc_objs: Vec<(Arc<Indexable>, Arc<Py<Indexable>>)> = raw_objs
+            .into_iter()
+            .map(|(idx, py)| (Arc::new(idx), Arc::new(py)))
+            .collect();
 
-        let mut allowed = Bitmap::new();
+        let mut allowed_writer: RwLockWriteGuard<'_, Bitmap> = self.get_allowed_items_writer();
         let mut items_writer = self.get_items_writer();
 
-        for (rust_handle, py_handle) in raw_objs {
+        for (rust_handle, py_handle) in &arc_objs {
+
             rust_handle.add_index(weak_self.clone());
-            allowed.add(rust_handle.id);
-            let rust_handle = Arc::new(rust_handle);
-            Self::store_item(&mut items_writer, py_handle, rust_handle.clone());
-            for (key, value) in rust_handle.get_py_values().iter(){
-                // if key.starts_with("_"){continue;}
+            allowed_writer.add(rust_handle.id);
+
+            let idx = rust_handle.id as usize;
+            let stored_item = StoredItem::new(py_handle.clone(), rust_handle.clone(),None);
+
+            if items_writer.len() <= idx{
+                items_writer.resize(idx * 2, StoredItem::default());
+            }
+
+            items_writer[idx] = stored_item;
+
+        }
+        drop(allowed_writer);
+        drop(items_writer);
+
+        for (rust_handle, _) in arc_objs {
+            for (key, value) in rust_handle.get_py_values().iter() {
                 self.add_index(weak_self.clone(), rust_handle.id, *key, value);
             }
         }
-
-        let mut allowed_writer: RwLockWriteGuard<'_, Bitmap> = self.get_allowed_items_writer();
-        allowed_writer.or_inplace(&allowed);
     }
 
     pub fn has_object_id(&self, id: u32) -> bool {
@@ -259,7 +258,6 @@ impl IndexAPI{
         
         let self_index = self.get_index_reader();
         for (self_qm, other_qm) in self_index.iter().zip(other_index.iter()) {
-            eprintln!("Merging attribute with {:p} and {:p}", self_qm, other_qm);
             self_qm.merge(other_qm);
         }
 
