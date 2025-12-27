@@ -17,12 +17,15 @@ use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyDict, PyList, PyString}, 
 
 use smol_str::SmolStr;
 
+use crate::index::core::structures::string_interner::INTERNER;
+use crate::index::core::structures::string_interner::StrInternerView;
+use crate::index::types::DEFAULT_INDEX_ARC;
+use crate::index::types::StrId;
 use crate::index::value::PyValue;
 use crate::index::HybridHashmap;
 use crate::index::core::index::IndexAPI;
 
 static GLOBAL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
-static DEFAULT_INDEX_ARC: Lazy<Arc<IndexAPI>> = Lazy::new(|| Arc::new(IndexAPI::new(None)));
 
 static FREE_IDS: Lazy<Mutex<Vec<u32>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
@@ -48,11 +51,11 @@ struct IndexMeta{
 }
 
 #[pyclass(subclass, freelist = 512)]
-
 pub struct Indexable{
-    meta: Mutex<SmallVec<[IndexMeta; 4]>>,
-    pub py_values: ArcSwap<HybridHashmap<SmolStr, PyValue>>,
-    pub id: u32
+    meta: Arc<Mutex<SmallVec<[IndexMeta; 4]>>>,
+    pub py_values: Arc<Mutex<HybridHashmap<StrId, PyValue>>>,
+    pub id: u32,
+    pub recycle_id_on_drop: bool
 }
 
 
@@ -61,19 +64,19 @@ impl Indexable{
 
     #[new]
     #[pyo3(signature = (*_args, **kwargs))]
-    #[inline(always)]
     fn new(
         _args: &Bound<'_, PyAny>, kwargs: Option<&Bound<'_, PyDict>>
     ) -> Self {
 
-        let mut py_values: HybridHashmap<SmolStr, PyValue>;
+        let mut py_values: HybridHashmap<StrId, PyValue>;
+        let mut interner = StrInternerView::new(&INTERNER);
 
         if let Some(dict) = kwargs {
             py_values = HybridHashmap::Small(SmallVec::new());
             for (key, value) in dict.iter() {
                 if let Ok(key_str) = key.extract::<&str>() {
-                    let key_string = SmolStr::new(key_str);
-                    py_values.insert(key_string, PyValue::new(value));
+                    let key_id: StrId = interner.intern(key_str);
+                    py_values.insert(key_id, PyValue::new(value));
                 }
             }
         } else {
@@ -81,51 +84,49 @@ impl Indexable{
         }
 
         Self {
-            meta: Mutex::new(SmallVec::new()),
+            meta: Arc::new(Mutex::new(SmallVec::new())),
             id: allocate_id(),
-            py_values: ArcSwap::from_pointee(py_values),
+            py_values: Arc::new(Mutex::new(py_values)),
+            recycle_id_on_drop: true
         }
     }
 
-    #[inline(always)]
     fn __setattr__<'py>(&self, py: Python, name: &str, value: Bound<'py, PyAny>) -> PyResult<()> {
 
         let val: PyValue = PyValue::new(value);
 
         py.allow_threads(||{
+            let mut interner = StrInternerView::new(&INTERNER);
             for ind in self.meta.lock().unwrap().iter() {
                 if let Some(full_index) = ind.index.upgrade() {
-
-                    if let Some(old_val) = self.get_py_values().get(name){
-                        full_index.update_index(ind.index.clone(), SmolStr::new(name), Some(old_val), &val, self.id);
+                    let name_id = interner.intern(name);
+                    if let Some(old_val) = self.get_py_values().get(&name_id){
+                        full_index.update_index(ind.index.clone(), name_id, Some(old_val), &val, self.id);
                     } else {
-                        full_index.update_index(ind.index.clone(), SmolStr::new(name), None, &val, self.id);
+                        full_index.update_index(ind.index.clone(), name_id, None, &val, self.id);
                     }
                 }
             }
         });
 
         // update value
-        let mut new_map = (*self.py_values.load_full()).clone();
-        new_map.insert(SmolStr::new(name), val);
-        self.py_values.store(Arc::new(new_map));
+        let str_id: StrId = INTERNER.intern(name);
+        self.py_values.lock().unwrap().insert(str_id, val);
         Ok(())
     }
 
-    #[inline(always)]
-    fn __getattribute__(self_: Bound<'_, Self>, py: Python, name: Bound<'_, PyString>) -> PyResult<PyObject> {
-
-        let rust_self = self_.borrow();
+    fn __getattribute__(self_: PyRef<'_, Self>, py: Python, name: Bound<'_, PyString>) -> PyResult<PyObject> {
 
         let name_str = match name.to_str() {
             Ok(s) => s,
             Err(_) => return Err(PyAttributeError::new_err("Invalid attribute name")),
         };
-        let py_values = rust_self.get_py_values();
-        if let Some(value) = py_values.get(name_str) {
+        let py_values = self_.get_py_values();
+
+        if let Some(value) = py_values.get(&INTERNER.intern(name_str)) {
             Ok(value.get_obj(py))
         } else {
-
+            drop(py_values);
             let res = unsafe { ffi::PyObject_GenericGetAttr(self_.into_ptr(), name.into_ptr()) };
             if res.is_null() {
                 Err(PyErr::fetch(py))
@@ -138,8 +139,9 @@ impl Indexable{
     fn __dir__(py_ref: PyRef<Self>, py: Python<'_>) -> PyResult<Py<PyList>> {
         let mut names: Vec<PyObject> = vec![];
         {
-            for key in py_ref.get_py_values().keys() {
-                names.push(PyString::new(py, key).into_py_any(py).unwrap());
+            let interner = StrInternerView::new(&INTERNER);
+            for key_id in py_ref.get_py_values().keys() {
+                names.push(PyString::new(py, interner.resolve(*key_id)).into_py_any(py).unwrap());
             }
         }
 
@@ -164,6 +166,16 @@ impl Indexable{
 
 impl Indexable {
 
+    pub fn from_py_ref(reference: &PyRef<Indexable>, _py: Python) -> Self {
+        // `reference` is a GIL-bound borrow; we clone the Arc pointers for Rust ownership
+        Self {
+            meta: reference.meta.clone(),
+            py_values: reference.py_values.clone(),
+            id: reference.id,
+            recycle_id_on_drop: false // ID authority is the Python handle
+        }
+    }
+
     fn trim_indexes(meta_lock: &mut MutexGuard<'_, SmallVec<[IndexMeta; 4]>>, remove: Arc<IndexAPI>){
         meta_lock.retain(|m| {
             // Try to upgrade the Weak
@@ -178,6 +190,8 @@ impl Indexable {
             }
         });
     }
+
+    #[inline(always)]
     pub fn add_index(&self, index: Weak<IndexAPI>) {
         let mut meta_lock: MutexGuard<'_, SmallVec<[IndexMeta; 4]>> = self.meta.lock().unwrap();
         meta_lock.push(IndexMeta {
@@ -193,14 +207,24 @@ impl Indexable {
         Self::trim_indexes(&mut meta_lock, index);
     }
 
-    pub fn get_py_values(&self) -> Guard<Arc<HybridHashmap<SmolStr, PyValue>>>{
-        self.py_values.load()
+    pub fn get_py_values(&self) -> MutexGuard<'_, HybridHashmap<StrId, PyValue>>{
+        self.py_values.lock().unwrap()
+    }
+
+    pub fn with_attr_id<F, R>(&self, str_id: StrId, f: F) -> Option<R>
+    where
+        F: FnOnce(&PyValue) -> R
+    {
+        let guard = self.get_py_values();
+        guard.get(&str_id).map(f)
     }
 }
 
 impl Drop for Indexable {
     fn drop(&mut self) {
-        free_id(self.id);
+        if self.recycle_id_on_drop {
+            free_id(self.id);
+        }
     }
 }
 
@@ -222,5 +246,16 @@ impl fmt::Debug for Indexable {
             .field("id", &self.id)
             .field("attributes", &self.py_values)
             .finish()
+    }
+}
+
+impl Default for Indexable {
+    fn default() -> Self {
+        Self {
+            meta: Arc::new(Mutex::new(SmallVec::new())),
+            id: allocate_id(),
+            py_values: Arc::new(Mutex::new(HybridHashmap::Small(SmallVec::new()))),
+            recycle_id_on_drop: true
+        }
     }
 }

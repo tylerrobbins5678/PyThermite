@@ -1,9 +1,16 @@
+use arc_swap::AsRaw;
 use pyo3::{IntoPyObjectExt, PyTypeInfo, prelude::*};
 use pyo3::types::{PyAny, PyDict, PyList, PySet, PyTuple};
+use rustc_hash::FxHasher;
+use smol_str::SmolStr;
+use std::ops::Deref;
+use std::primitive;
+use std::ptr::NonNull;
 use std::sync::Arc;
 use std::{hash::{Hash, Hasher}};
 use pyo3::conversion::IntoPyObject;
 
+use crate::index::types::{bool_type_ptrs, float_type_ptrs, int_type_ptrs, str_type_ptrs};
 use crate::index::{types, Indexable};
 
 #[derive(Debug)]
@@ -28,12 +35,29 @@ impl Clone for PyIterable {
 }
 
 #[derive(Clone, Debug)]
+pub struct StoredIndexable {
+    pub python_handle: Arc<Py<Indexable>>,
+    pub owned_handle: Arc<Indexable>
+}
+
+impl StoredIndexable {
+    pub fn from_py_ref(py_ref: PyRef<Indexable>, py: Python) -> Self {
+        Self {
+            owned_handle: Arc::new(Indexable::from_py_ref(&py_ref, py)),
+            python_handle: Arc::new(py_ref.into_pyobject(py).unwrap().unbind())
+        }
+    }
+}
+
+
+#[derive(Clone, Debug)]
 pub enum RustCastValue {
     Int(i64),
     Float(f64),
-    Str(String),
+    Str(SmolStr),
+    Bool(bool),
     Iterable(PyIterable),
-    Ind(Arc<Py<Indexable>>),
+    Ind(StoredIndexable),
     Unknown,
 }
 
@@ -50,14 +74,21 @@ impl PyValue {
         let py_type = obj.get_type();
         let py = obj.py();
 
-        let primitave = if py_type.is(pyo3::types::PyInt::type_object(py)) {
+        // primitave types - check first
+        let primitave = 
+        if int_type_ptrs(py).contains(&py_type.as_ptr()) {
             RustCastValue::Int(obj.extract::<i64>().expect("type checked"))
-        } else if py_type.is(pyo3::types::PyFloat::type_object(py)) {
+        } else if float_type_ptrs(py).contains(&py_type.as_ptr()) {
             RustCastValue::Float(obj.extract::<f64>().expect("type checked"))
-        } else if py_type.is(pyo3::types::PyString::type_object(py)) {
-            RustCastValue::Str(obj.extract::<String>().expect("type checked"))
+        } else if str_type_ptrs(py).contains(&py_type.as_ptr()) {
+            RustCastValue::Str(SmolStr::new(obj.extract::<&str>().expect("type checked")))
+        } else if bool_type_ptrs(py).contains(&py_type.as_ptr()) {
+            RustCastValue::Bool(obj.extract::<bool>().expect("type checked"))
+
+        // complex types - pointer based equality
         } else if py_type.is_subclass(types::indexable_type().bind(py)).unwrap_or(false) {
-            RustCastValue::Ind(Arc::new(obj.extract::<Py<Indexable>>().expect("type checked")))
+            let py_ref = obj.extract::<PyRef<Indexable>>().expect("type checked");
+            RustCastValue::Ind(StoredIndexable::from_py_ref(py_ref, py))
         } else if py_type.is(pyo3::types::PyList::type_object(py)) {
             RustCastValue::Iterable(PyIterable::List(obj.extract::<Py<PyList>>().expect("type checked")))
         } else if py_type.is(pyo3::types::PyTuple::type_object(py)) {
@@ -70,10 +101,7 @@ impl PyValue {
             RustCastValue::Unknown
         };
 
-        let hash = match obj.hash() {
-            Ok(i) => i as u64,
-            Err(_) => 0,
-        };
+        let hash = Self::hash_primitave(&primitave);
 
         Self {
             obj: Some(Arc::new(obj.into())),
@@ -82,31 +110,45 @@ impl PyValue {
         }
     }
 
-    pub fn from_primitave(prim: RustCastValue) -> Self {
-        let hash = match &prim {
-            RustCastValue::Int(v) => {
-                let mut s = std::collections::hash_map::DefaultHasher::new();
-                v.hash(&mut s);
-                s.finish()
+    fn hash_primitave(primitave: &RustCastValue) -> u64 {
+        let mut hasher = FxHasher::default();
+        match &primitave {
+            RustCastValue::Int(i) => {
+                hasher.write_u64(i.cast_unsigned())
             },
-            RustCastValue::Float(v) => {
-                let mut s = std::collections::hash_map::DefaultHasher::new();
-                // convert f64 to bits for stable hashing
-                v.to_bits().hash(&mut s);
-                s.finish()
+            RustCastValue::Float(f) => {
+                hasher.write_u64(f.to_bits())
+            },
+            RustCastValue::Bool(b) => {
+                hasher.write_u64(*b as u64)
             },
             RustCastValue::Str(s) => {
-                let mut s_hasher = std::collections::hash_map::DefaultHasher::new();
-                s.hash(&mut s_hasher);
-                s_hasher.finish()
+                s.hash(&mut hasher);
             },
-            RustCastValue::Iterable(_) |
-            RustCastValue::Ind(_) |
-            RustCastValue::Unknown => {
-                // fallback hash for other types, may adjust
-                0
-            }
+            RustCastValue::Ind(ind) => {
+                hasher.write_u64(ind.python_handle.as_ptr() as u64)
+            },
+            RustCastValue::Iterable(itr) => {
+                hasher.write_u64(itr as *const _ as u64)
+            },
+            RustCastValue::Unknown => hasher.write_u64(0u64),
         };
+        hasher.write_u8({
+            match &primitave {
+                RustCastValue::Int(_) => 1,
+                RustCastValue::Float(_) => 2,
+                RustCastValue::Str(_) => 3,
+                RustCastValue::Bool(_) => 4,
+                RustCastValue::Iterable(_) => 5,
+                RustCastValue::Ind(_) => 6,
+                RustCastValue::Unknown => 7
+            }
+        });
+        hasher.finish()
+    }
+
+    pub fn from_primitave(prim: RustCastValue) -> Self {
+        let hash = Self::hash_primitave(&prim);
 
         Self {
             obj: None,
@@ -115,41 +157,46 @@ impl PyValue {
         }
     }
 
-    pub fn new_iter<'py>(obj: Bound<'py, PyAny>) -> Box<dyn Iterator<Item = PyValue> + 'py> {
-        let py_type = obj.get_type();
-        let py = obj.py();
-
-        // Only iterate over native Python containers
-        let is_container = py_type.is(pyo3::types::PyList::type_object(py))
-            || py_type.is(pyo3::types::PyTuple::type_object(py))
-            || py_type.is(pyo3::types::PyDict::type_object(py))
-            || py_type.is(pyo3::types::PySet::type_object(py));
-        
-        if is_container {
-            if let Ok(iter) = obj.try_iter() {
-                return Box::new(iter.filter_map(|item| item.ok().map(PyValue::new)));
-            }
-        }
-
-        Box::new(std::iter::once(PyValue::new(obj)))
-    }
-
     pub fn get_primitive(&self) -> &RustCastValue {
         &self.primitave
     }
 
+    pub fn get_hash(&self) -> u64 {
+        self.hash
+    }
+
     pub fn get_obj(&self, py: Python) -> Py<PyAny> {
-        match self.primitave {
+        match &self.primitave {
             RustCastValue::Int(v) => v.into_py_any(py).unwrap(),
             RustCastValue::Float(v) => v.into_py_any(py).unwrap(),
-            _ => self.obj.clone().unwrap().clone_ref(py)
+            RustCastValue::Bool(v) => v.into_py_any(py).unwrap(),
+            RustCastValue::Str(v) => v.into_py_any(py).unwrap(),
+            _ => self.obj.as_ref().unwrap().clone_ref(py)
         }
     }
 }
 
 impl PartialEq for PyValue {
     fn eq(&self, other: &Self) -> bool {
-        self.hash == other.hash
+        if self.hash != other.hash {
+            return false;
+        }
+        match (&self.primitave, &other.primitave) {
+            (RustCastValue::Int(a), RustCastValue::Int(b)) => a == b,
+            (RustCastValue::Float(a), RustCastValue::Float(b)) => a == b,
+            (RustCastValue::Int(a), RustCastValue::Float(b)) => (*a as f64) == *b,
+            (RustCastValue::Float(a), RustCastValue::Int(b)) => *a == (*b as f64),
+            (RustCastValue::Bool(a), RustCastValue::Int(b)) => (*a as i64) == *b,
+            (RustCastValue::Int(a), RustCastValue::Bool(b)) => *a == (*b as i64),
+            (RustCastValue::Bool(a), RustCastValue::Bool(b)) => a == b,
+            (RustCastValue::Str(a), RustCastValue::Str(b)) => a == b,
+            // fallback to pointer identity
+            (RustCastValue::Ind(a), RustCastValue::Ind(b)) => a.python_handle.as_ptr() == b.python_handle.as_ptr(),
+            (RustCastValue::Iterable(a), RustCastValue::Iterable(b)) => {
+                std::ptr::eq(a as *const _, b as *const _)
+            },
+            _ => false,
+        }
     }
 }
 

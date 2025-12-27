@@ -9,7 +9,7 @@ impl FilteredIndex{
     pub fn get_from_indexes(&self, py: Python, indexes: &Bitmap) -> PyResult<Vec<Py<Indexable>>>{
         let items = self.items.read().unwrap();
         let results: Vec<Py<Indexable>> = indexes.iter()
-            .map(|arc| items.get(arc as usize).unwrap().as_ref().unwrap().get_py_ref(py))
+            .map(|arc| items.get(arc as usize).unwrap().get_py_ref(py))
             .collect();
         Ok(results)
     }

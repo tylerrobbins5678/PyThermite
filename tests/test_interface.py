@@ -142,3 +142,14 @@ def test_updates_reflect(index):
 
     result = index.reduced_query(query).collect()
     assert len(result) == 1
+
+def test_union_with(index):
+    objs = [TestClass(num=i, ind = "A") for i in range(10)]
+    index.add_object_many(objs)
+
+    objs = [TestClass(num=i, ind = "B") for i in range(10)]
+    index_2 = Index()
+    index_2.add_object_many(objs)
+
+    index.union_with(index_2)
+    result = index.collect()

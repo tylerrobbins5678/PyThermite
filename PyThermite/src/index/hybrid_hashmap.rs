@@ -1,6 +1,9 @@
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+use smol_str::SmolStr;
 use std::{borrow::Borrow, hash::Hash};
+
+use crate::index::value::PyValue;
 
 #[derive(Clone, Debug)]
 pub enum HybridHashmap<K, V> {
@@ -72,5 +75,12 @@ where
             HybridHashmap::Small(vec) => Box::new(vec.iter().map(|(k, _)| k)),
             HybridHashmap::Map(map) => Box::new(map.keys()),
         }
+    }
+}
+
+
+impl Default for HybridHashmap<SmolStr, PyValue> {
+    fn default() -> Self {
+        HybridHashmap::Small(SmallVec::new())
     }
 }
