@@ -69,23 +69,6 @@ impl IndexAPI{
         guard[idx].get_path_to_root()
     }
 
-    pub fn store_item(
-        &self,
-        py_handle: Py<Indexable>,
-        rust_handle: Arc<Indexable>
-    ) {
-
-        let idx = rust_handle.id as usize;
-        let stored_item = StoredItem::new(Arc::new(py_handle), rust_handle,None);
-        
-        let mut items_writer: std::sync::RwLockWriteGuard<'_, Vec<StoredItem>> = self.get_items_writer();
-        if items_writer.len() <= idx{
-            items_writer.resize(idx * 2, StoredItem::default());
-        }
-
-        items_writer[idx] = stored_item;
-    }
-
     pub fn add_object_many(
         &self,
         weak_self: Weak<Self>,
@@ -97,17 +80,19 @@ impl IndexAPI{
             .map(|(idx, py)| (Arc::new(idx), Arc::new(py)))
             .collect();
 
-        let mut allowed = Bitmap::new();
+        let mut allowed_writer: RwLockWriteGuard<'_, Bitmap> = self.get_allowed_items_writer();
+        let mut items_writer = self.get_items_writer();
 
         for (rust_handle, py_handle) in &arc_objs {
 
             rust_handle.add_index(weak_self.clone());
-            allowed.add(rust_handle.id);
-            let rust_handle = Arc::new(rust_handle);
-            self.store_item(py_handle, rust_handle.clone());
-            for (key, value) in rust_handle.get_py_values().iter(){
-                // if key.starts_with("_"){continue;}
-                self.add_index(weak_self.clone(), rust_handle.id, *key, value);
+            allowed_writer.add(rust_handle.id);
+
+            let idx = rust_handle.id as usize;
+            let stored_item = StoredItem::new(py_handle.clone(), rust_handle.clone(),None);
+
+            if items_writer.len() <= idx{
+                items_writer.resize(idx * 2, StoredItem::default());
             }
 
             items_writer[idx] = stored_item;
