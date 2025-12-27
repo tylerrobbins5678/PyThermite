@@ -91,10 +91,16 @@ impl IndexAPI{
         weak_self: Weak<Self>,
         raw_objs: Vec<(Indexable, Py<Indexable>)>
     ) {
+        // 3 pass - wrap in ARC - add meta to index with locks - add to index maps which may call meta locks
+        let arc_objs: Vec<(Arc<Indexable>, Arc<Py<Indexable>>)> = raw_objs
+            .into_iter()
+            .map(|(idx, py)| (Arc::new(idx), Arc::new(py)))
+            .collect();
 
         let mut allowed = Bitmap::new();
 
-        for (rust_handle, py_handle) in raw_objs {
+        for (rust_handle, py_handle) in &arc_objs {
+
             rust_handle.add_index(weak_self.clone());
             allowed.add(rust_handle.id);
             let rust_handle = Arc::new(rust_handle);
@@ -103,10 +109,18 @@ impl IndexAPI{
                 // if key.starts_with("_"){continue;}
                 self.add_index(weak_self.clone(), rust_handle.id, *key, value);
             }
-        }
 
-        let mut allowed_writer: RwLockWriteGuard<'_, Bitmap> = self.get_allowed_items_writer();
-        allowed_writer.or_inplace(&allowed);
+            items_writer[idx] = stored_item;
+
+        }
+        drop(allowed_writer);
+        drop(items_writer);
+
+        for (rust_handle, _) in arc_objs {
+            for (key, value) in rust_handle.get_py_values().iter() {
+                self.add_index(weak_self.clone(), rust_handle.id, *key, value);
+            }
+        }
     }
 
     pub fn has_object_id(&self, id: u32) -> bool {
