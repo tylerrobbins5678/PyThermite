@@ -7,7 +7,7 @@ use crate::index::core::query::b_tree::{FULL_KEYS, Key, MAX_KEYS, composite_key:
 #[derive(Debug, Clone)]
 pub struct InternalNode {
     pub keys: [CompositeKey128; MAX_KEYS],
-    pub children: [Option<BitMapBTreeNode>; MAX_KEYS],
+    pub children: [BitMapBTreeNode; MAX_KEYS],
     pub children_bitmaps: [Option<Bitmap>; MAX_KEYS],
     pub num_keys: usize,
     pub offset: usize,
@@ -18,29 +18,31 @@ impl InternalNode {
     pub fn new() -> Self{
         Self{
             keys: [CompositeKey128::default(); MAX_KEYS],
-            children: std::array::from_fn(|_| None),
+            children: [const { BitMapBTreeNode::Empty }; MAX_KEYS],
             children_bitmaps: std::array::from_fn(|_| None),
             num_keys: 0,
             offset: MAX_KEYS / 2
         }
     }
 
+    #[inline]
     fn shift_left(&mut self, start: usize, end: usize, amount: usize) {
         // Shift keys left
         for i in start..end {
             let to: usize = i - amount;
             self.keys[to] = self.keys[i];
-            self.children[to] = self.children[i].take();
+            self.children[to] = std::mem::replace(&mut self.children[i], BitMapBTreeNode::Empty);
             self.children_bitmaps[to] = self.children_bitmaps[i].take();
         }
     }
 
+    #[inline]
     fn shift_right(&mut self, start: usize, end: usize, amount: usize) {
         // Shift keys right
         for i in (start..end).rev() {
             let to = i + amount;
             self.keys[to] = self.keys[i];
-            self.children[to] = self.children[i].take();
+            self.children[to] = std::mem::replace(&mut self.children[i], BitMapBTreeNode::Empty);
             self.children_bitmaps[to] = self.children_bitmaps[i].take();
         }
     }
@@ -109,8 +111,7 @@ impl InternalNode {
             }
         };
 
-        let child = self.children[self.offset + idx].as_mut().expect("Missing child");
-        let is_full = match child {
+        let is_full = match &self.children[self.offset + idx] {
             BitMapBTreeNode::Leaf(leaf) => leaf.is_full(),
             BitMapBTreeNode::Internal(internal) => internal.is_full(),
             BitMapBTreeNode::Empty => false,
@@ -134,15 +135,13 @@ impl InternalNode {
             Err(i) => if i == 0 { 0 } else { i - 1 }
         };
 
-        let node = self.children[self.offset + idx].as_mut().expect("Missing child");
-
-        node.remove_composite_key(key)
+        self.children[self.offset + idx].remove_composite_key(key)
     }
 
 
     fn insert_non_full(&mut self, key: CompositeKey128, index: usize){
-        match self.children[self.offset + index].as_mut() {
-            Some(BitMapBTreeNode::Leaf(leaf)) => {
+        match &mut self.children[self.offset + index] {
+            BitMapBTreeNode::Leaf(leaf) => {
                 leaf.insert_non_full(key);
                 if let Some(bitmap) = &mut self.children_bitmaps[self.offset + index] {
                     bitmap.add(key.get_id());
@@ -150,7 +149,7 @@ impl InternalNode {
                     panic!("Bitmap should be present for leaf");
                 }
             }
-            Some(BitMapBTreeNode::Internal(internal)) => {
+            BitMapBTreeNode::Internal(internal) => {
                 internal.insert(key);
                 if let Some(bitmap) = &mut self.children_bitmaps[self.offset + index] {
                     bitmap.add(key.get_id());
@@ -158,8 +157,7 @@ impl InternalNode {
                     panic!("Bitmap should be present for internal");
                 }
             }
-            None => panic!("No child at index {}", index),
-            Some(BitMapBTreeNode::Empty) => panic!("Cannot insert into empty node"),
+            BitMapBTreeNode::Empty => panic!("Cannot insert into empty node"),
         }
 
         if self.offset == 0 || self.offset + self.num_keys == MAX_KEYS {
@@ -188,12 +186,12 @@ impl InternalNode {
         let mid = self.num_keys  / 2;
         let len = self.num_keys - mid;
         let mut right_keys = [CompositeKey128::default(); MAX_KEYS];
-        let mut children = std::array::from_fn(|_| None);
+        let mut children = [const { BitMapBTreeNode::Empty }; MAX_KEYS];
         let mut children_bm = std::array::from_fn(|_| None);
         let offset = MAX_KEYS / 4;
         for i in 0..len {
             right_keys[offset + i] = self.keys[self.offset + mid + i];
-            children[offset + i] = self.children[self.offset + mid + i].take();
+            children[offset + i] = std::mem::replace(&mut self.children[self.offset + mid + i], BitMapBTreeNode::Empty);
             children_bm[offset + i] = self.children_bitmaps[self.offset + mid + i].take();
         }
 
@@ -213,7 +211,7 @@ impl InternalNode {
 
 
     fn split_and_insert(&mut self, key: CompositeKey128, idx: usize) {
-        let left_node = self.children[self.offset + idx].as_mut().unwrap();
+        let left_node = &mut self.children[self.offset + idx];
         let (sep_key, mut new_node, mut new_bitmap) = match left_node {
             BitMapBTreeNode::Leaf(leaf) => {
                 let (k, right_leaf) = leaf.split();
@@ -255,7 +253,7 @@ impl InternalNode {
         insert = self.offset + idx + 1;
         // Insert separator key at idx - greater than current key
         self.keys[insert] = sep_key;
-        self.children[insert] = Some(new_node);
+        self.children[insert] = new_node;
         self.children_bitmaps[insert] = Some(new_bitmap);
 
         self.num_keys += 1;
@@ -289,10 +287,8 @@ impl InternalNode {
         };
 
         // Recurse into left boundary child
-        if let Some(left_child) = &self.children[self.offset + low_idx] {
-            let child_bitmap = left_child.query_range(lower, upper, allowed);
-            res.or_inplace(&child_bitmap);
-        }
+        let child_bitmap = self.children[self.offset + low_idx].query_range(lower, upper, allowed);
+        res.or_inplace(&child_bitmap);
 
         // Include fully-contained children bitmaps in the middle
         for i in (low_idx + 1)..high_idx {
@@ -303,15 +299,14 @@ impl InternalNode {
 
         // Recurse into right boundary child (only if different from left)
         if high_idx != low_idx {
-            if let Some(right_child) = &self.children[self.offset + high_idx] {
-                let child_bitmap = right_child.query_range(lower, upper, allowed);
-                res.or_inplace(&child_bitmap);
-            }
+            let child_bitmap = &self.children[self.offset + high_idx].query_range(lower, upper, allowed);
+            res.or_inplace(&child_bitmap);
         }
 
         res
     }
 
+    #[inline(always)]
     pub fn is_full(&self) -> bool {
         self.num_keys >= FULL_KEYS && (self.offset == 0 || self.num_keys + self.offset >= MAX_KEYS)
     }
@@ -360,13 +355,12 @@ impl<'a> Iterator for InternalNodeIter<'a> {
             }
 
             // 3) Create iterator for next valid child
-            if let Some(child) = &self.node.children[self.node.offset + self.child_idx] {
-                self.current_child_iter = Some(match child {
-                    BitMapBTreeNode::Leaf(l) => Box::new(LeafNodeIter::new(l)),
-                    BitMapBTreeNode::Internal(n) => Box::new(InternalNodeIter::new(n)),
-                    BitMapBTreeNode::Empty => Box::new(std::iter::empty()), // Empty iterator for empty nodes
-                });
-            }
+            self.current_child_iter = match &self.node.children[self.node.offset + self.child_idx] {
+                BitMapBTreeNode::Leaf(l) => Some(Box::new(LeafNodeIter::new(l))),
+                BitMapBTreeNode::Internal(n) => Some(Box::new(InternalNodeIter::new(n))),
+                BitMapBTreeNode::Empty => None, // Empty iterator for empty nodes
+            };
+
 
             self.child_idx += 1;
         }

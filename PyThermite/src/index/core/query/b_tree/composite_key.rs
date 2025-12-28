@@ -42,6 +42,7 @@ impl CompositeKey128 {
         }
     }
 
+    #[inline(always)]
     fn encode_f64_to_float76(val: OrderedFloat<f64>) -> u128 {
 
         if val.0 == 0.0 {
@@ -80,6 +81,7 @@ impl CompositeKey128 {
         key_bits
     }
 
+    #[inline(always)]
     fn encode_i64_to_float76(n: i64) -> u128 {
         if n == 0 {
             return 1u128 << SIGN_BIT_POS; // special zero encoding
@@ -158,6 +160,7 @@ impl CompositeKey128 {
         if was_neg { -abs } else { abs }
     }
 
+    #[inline(always)]
     pub fn get_id(&self) -> u32 {
         // (self.raw & 0xFFFF_FFFF) as u32
         (self.raw & ID_MASK) as u32

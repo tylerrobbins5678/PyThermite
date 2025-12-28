@@ -57,12 +57,12 @@ impl BitMapBTree {
                 new_root.keys[base_index + 1] = sep_key;
 
                 // Insert the two children
-                new_root.children[base_index] = Some(BitMapBTreeNode::Leaf(left_leaf));
-                new_root.children[base_index + 1] = Some(BitMapBTreeNode::Leaf(Box::new(right_leaf)));
+                new_root.children[base_index] = BitMapBTreeNode::Leaf(left_leaf);
+                new_root.children[base_index + 1] = BitMapBTreeNode::Leaf(Box::new(right_leaf));
 
                 // Initialize children bitmaps
-                new_root.children_bitmaps[base_index] = new_root.children[base_index].as_ref().map(|child| child.get_bitmap());
-                new_root.children_bitmaps[base_index + 1] = new_root.children[base_index + 1].as_ref().map(|child| child.get_bitmap());
+                new_root.children_bitmaps[base_index] = Some(new_root.children[base_index].get_bitmap());
+                new_root.children_bitmaps[base_index + 1] = Some(new_root.children[base_index + 1].get_bitmap());
 
                 new_root.num_keys = 2;
                 new_root.offset = base_index;
@@ -80,11 +80,11 @@ impl BitMapBTree {
                 new_root.keys[base_index] = left_internal.least_key();
                 new_root.keys[base_index + 1] = sep_key;
 
-                new_root.children[base_index] = Some(BitMapBTreeNode::Internal(left_internal));
-                new_root.children[base_index + 1] = Some(BitMapBTreeNode::Internal(Box::new(right_internal)));
+                new_root.children[base_index] = BitMapBTreeNode::Internal(left_internal);
+                new_root.children[base_index + 1] = BitMapBTreeNode::Internal(Box::new(right_internal));
 
-                new_root.children_bitmaps[base_index] = new_root.children[base_index].as_ref().map(|child| child.get_bitmap());
-                new_root.children_bitmaps[base_index + 1] = new_root.children[base_index + 1].as_ref().map(|child| child.get_bitmap());
+                new_root.children_bitmaps[base_index] = Some(new_root.children[base_index].get_bitmap());
+                new_root.children_bitmaps[base_index + 1] = Some(new_root.children[base_index + 1].get_bitmap());
 
                 new_root.num_keys = 2;
                 new_root.offset = base_index;
@@ -235,11 +235,9 @@ impl BitMapBTreeNode {
 
                 // For simplicity, recurse on all children but you can optimize
                 for i in 0..MAX_KEYS {
-                    if let Some(child) = &internal.children[i] {
-                        // TODO: optimize by checking child's key range if available
-                        // println!("{pad}  └── Child[{i}]:");
-                        child.debug_print_range(indent + 1, lower, upper);
-                    }
+                    // TODO: optimize by checking child's key range if available
+                    // println!("{pad}  └── Child[{i}]:");
+                    &internal.children[i].debug_print_range(indent + 1, lower, upper);
                 }
             }
             BitMapBTreeNode::Empty => {
@@ -276,10 +274,8 @@ impl BitMapBTreeNode {
                 }
 
                 for i in 0..MAX_KEYS {
-                    if let Some(child) = &internal.children[i] {
-                        println!("{pad}  └── Child[{i}]:");
-                        child.debug_print(indent + 1);
-                    }
+                    println!("{pad}  └── Child[{i}]:");
+                    &internal.children[i].debug_print(indent + 1);
                 }
             }
             BitMapBTreeNode::Empty => {
