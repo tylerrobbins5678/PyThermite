@@ -161,6 +161,9 @@ impl QueryMap {
                     all_valid
                 )
             }
+            RustCastValue::Str(extracted_str) => {
+                self.str_radix_map.read().unwrap().get_exact(extracted_str)
+            }
             _ => {
                 if let Some(res) = self.exact.get(val){
                     res.as_bitmap()

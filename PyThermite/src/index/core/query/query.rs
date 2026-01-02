@@ -9,7 +9,7 @@ use smol_str::SmolStr;
 
 const QUERY_DEPTH_LEN: usize = 12;
 
-use crate::index::{Indexable, core::{query::{attr_parts, b_tree::{composite_key::CompositeKey128, ranged_b_tree::BitMapBTreeIter}}, structures::{hybrid_set::{HybridSet, HybridSetOps}, shards::ShardedHashMap}}, types::StrId, value::{PyIterable, PyValue, RustCastValue, StoredIndexable}};
+use crate::index::{Indexable, core::{query::{attr_parts, b_tree::{composite_key::CompositeKey128, ranged_b_tree::BitMapBTreeIter}}, structures::{hybrid_set::{HybridSet, HybridSetOps}, positional_bitmap::PositionalBitmap, shards::ShardedHashMap}}, types::StrId, value::{PyIterable, PyValue, RustCastValue, StoredIndexable}};
 use crate::index::core::index::IndexAPI;
 use crate::index::core::stored_item::{StoredItem, StoredItemParent};
 use crate::index::core::query::b_tree::{BitMapBTree, Key};
@@ -17,6 +17,7 @@ use crate::index::core::query::b_tree::{BitMapBTree, Key};
 #[derive(Default)]
 pub struct QueryMap {
     pub exact: ShardedHashMap<PyValue, HybridSet>,
+    pub str_radix_map: RwLock<PositionalBitmap>,
     pub parent: Weak<IndexAPI>,
     pub num_ordered: RwLock<BitMapBTree>,
     pub nested: Arc<IndexAPI>,
@@ -36,6 +37,7 @@ impl QueryMap {
         };
         Self{
             exact: ShardedHashMap::<PyValue, HybridSet>::with_shard_count(16),
+            str_radix_map: RwLock::new(PositionalBitmap::new()),
             attr_stored: attr_id,
             parent: parent.clone(),
             num_ordered: RwLock::new(BitMapBTree::new()),
@@ -55,6 +57,14 @@ impl QueryMap {
                 shard.insert(value.clone(), HybridSet::of(&[obj_id]));
             }
         }
+    }
+
+    fn insert_str(&self, value: &str, obj_id: u32) {
+        self.str_radix_map.write().unwrap().add(value, obj_id);
+    }
+
+    fn remove_str(&self, value: &str, obj_id: u32) {
+        self.str_radix_map.write().unwrap().remove(value, obj_id);
     }
 
     fn insert_num_ordered(&self, key: Key, obj_id: u32){
@@ -150,8 +160,9 @@ impl QueryMap {
                 self.insert_iterable(py_iterable, obj_id);
             }
             RustCastValue::Bool(_) => self.insert_exact(value, obj_id),
-            RustCastValue::Str(_) => {
-                self.insert_exact(value, obj_id);
+            RustCastValue::Str(extracted_str) => {
+                self.insert_str(extracted_str, obj_id);
+                // self.insert_exact(value, obj_id);
             },
             RustCastValue::Unknown => {
                 self.insert_exact(value, obj_id);
@@ -244,8 +255,9 @@ impl QueryMap {
                 // self.remove_exact(py_value, idx);
                 self.remove_num_ordered(Key::FloatOrdered(OrderedFloat(*f)), idx);
             }
-            RustCastValue::Str(_) => {
-                self.remove_exact(py_value, idx);
+            RustCastValue::Str(extracted_str) => {
+                self.remove_str(extracted_str, idx);
+                // self.remove_exact(py_value, idx);
             },
             RustCastValue::Bool(_) => self.remove_exact(py_value, idx),
             RustCastValue::Ind(indexable) => {
