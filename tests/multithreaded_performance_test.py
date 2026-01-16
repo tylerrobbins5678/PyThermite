@@ -45,6 +45,34 @@ def prep_data(size):
                 "country": np.random.choice(["US", "CA", "MX", "FR", "DE"]),
                 "group": random_str(),
                 "tags": np.random.choice(["a", "b", "c", "d"]),
+                "_4_id": i,
+                "_4_age": np.random.randint(18, 80),
+                "_4_score": np.random.rand() * 100,
+                "_4_active": np.random.choice([True, False]),
+                "_4_country": np.random.choice(["US", "CA", "MX", "FR", "DE"]),
+                "_4_group": random_str(),
+                "_4_tags": np.random.choice(["a", "b", "c", "d"]),
+                "_3_id": i,
+                "_3_age": np.random.randint(18, 80),
+                "_3_score": np.random.rand() * 100,
+                "_3_active": np.random.choice([True, False]),
+                "_3_country": np.random.choice(["US", "CA", "MX", "FR", "DE"]),
+                "_3_group": random_str(),
+                "_3_tags": np.random.choice(["a", "b", "c", "d"]),
+                "_2_id": i,
+                "_2_age": np.random.randint(18, 80),
+                "_2_score": np.random.rand() * 100,
+                "_2_active": np.random.choice([True, False]),
+                "_2_country": np.random.choice(["US", "CA", "MX", "FR", "DE"]),
+                "_2_group": random_str(),
+                "_2_tags": np.random.choice(["a", "b", "c", "d"]),
+                "_1_id": i,
+                "_1_age": np.random.randint(18, 80),
+                "_1_score": np.random.rand() * 100,
+                "_1_active": np.random.choice([True, False]),
+                "_1_country": np.random.choice(["US", "CA", "MX", "FR", "DE"]),
+                "_1_group": random_str(),
+                "_1_tags": np.random.choice(["a", "b", "c", "d"]),
             }
         )
         for i in range(size)
@@ -85,7 +113,7 @@ def multithreaded_add(thread_num, data):
 
 
 if __name__ == "__main__":
-    data = prep_data(5_000_000)
+    data = prep_data(1_000_000)
     multithreaded_add(1, data[:10_000])
     multithreaded_add(2, data[:10_000])
 

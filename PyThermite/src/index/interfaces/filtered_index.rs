@@ -3,9 +3,8 @@ use std::{sync::{Arc, RwLock}};
 use croaring::Bitmap;
 use pyo3::{pyclass, pymethods, Py, PyAny, PyResult, Python};
 use rustc_hash::FxHashMap;
-use smol_str::SmolStr;
 
-use crate::index::{Index, Indexable, PyQueryExpr, types::{IndexTree, StrId}};
+use crate::index::{Index, Indexable, PyQueryExpr, types::IndexTree};
 use crate::index::core::stored_item::StoredItem;
 use crate::index::core::index::IndexAPI;
 use crate::index::core::query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, QueryMap};

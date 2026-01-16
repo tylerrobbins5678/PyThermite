@@ -1,14 +1,13 @@
 
 use std::{collections:: HashSet, ops::Bound};
 
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use croaring::Bitmap;
 use ordered_float::OrderedFloat;
 use pyo3::{PyAny, PyResult, types::{PyAnyMethods, PyString}};
 use smol_str::SmolStr;
 
-use crate::index::{core::{query::QueryMap, structures::{hybrid_set::{HybridSet, HybridSetOps}, string_interner::{INTERNER, StrInternerView}}}, interfaces::PyQueryExpr, types::StrId, value::{PyValue, RustCastValue}};
+use crate::index::{core::{query::QueryMap, structures::{hybrid_set::{HybridSetOps}, string_interner::{INTERNER, StrInternerView}}}, interfaces::PyQueryExpr, value::{PyValue, RustCastValue}};
 use crate::index::core::query::b_tree::Key;
 
 impl QueryMap {
@@ -174,6 +173,40 @@ impl QueryMap {
         }
     }
 
+    fn starts_with(&self, start: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
+        match start {
+            RustCastValue::Str(smol_str) => {
+                let mut res = self.read_str_radix_map().starts_with(smol_str);
+                res.and_inplace(all_valid);
+                res
+            },
+            _ => Bitmap::new(),
+        }
+    }
+
+
+    fn ends_with(&self, end: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
+        match end {
+            RustCastValue::Str(smol_str) => {
+                let mut res = self.read_str_radix_map().ends_with(smol_str);
+                res.and_inplace(all_valid);
+                res
+            },
+            _ => Bitmap::new(),
+        }
+    }
+
+    fn contains(&self, inner: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
+        match inner {
+            RustCastValue::Str(smol_str) => {
+                let mut res = self.read_str_radix_map().contains(smol_str);
+                res.and_inplace(all_valid);
+                res
+            },
+            _ => Bitmap::new(),
+        }
+    }
+
 }
 
 pub fn filter_index_by_hashes(
@@ -222,15 +255,21 @@ pub fn filter_index_by_hashes(
 pub enum QueryExpr {
     Eq(SmolStr, PyValue),
     Ne(SmolStr, PyValue),
+    Not(Box<QueryExpr>),
+
+    In(SmolStr, Vec<PyValue>),
+    And(Vec<QueryExpr>),
+    Or(Vec<QueryExpr>),
+    // numeric ops
     Gt(SmolStr, PyValue),
     Ge(SmolStr, PyValue),
     Lt(SmolStr, PyValue),
     Le(SmolStr, PyValue),
     Bt(SmolStr, PyValue, PyValue),
-    In(SmolStr, Vec<PyValue>),
-    Not(Box<QueryExpr>),
-    And(Vec<QueryExpr>),
-    Or(Vec<QueryExpr>),
+    // string ops
+    StartsWi(SmolStr, PyValue),
+    EndsWi(SmolStr, PyValue),
+    Contains(SmolStr, PyValue),
 }
 
 pub fn attr_parts(attr: SmolStr) -> (SmolStr, Option<SmolStr>) {
@@ -284,7 +323,7 @@ pub fn evaluate_query(
             let mut result;
             let base_attr_id = INTERNER.intern(&base_attr) as usize;
             if let Some(qm) = index.get(base_attr_id) {
-                
+        
                 if let Some(nested_attr) = nested_attr {
                     let query = QueryExpr::In(nested_attr, values.clone());
                     result = evaluate_nested_query(qm, &query);
@@ -405,6 +444,52 @@ pub fn evaluate_query(
                 })
                 .unwrap_or_else(Bitmap::new) // handle empty exprs
         }
+        
+        QueryExpr::StartsWi(attr, py_value) => {
+            let (base_attr, nested_attr) = attr_parts(attr.clone());
+            let base_attr_id = INTERNER.intern(&base_attr) as usize;
+
+            if let Some(qm) = index.get(base_attr_id) {
+                if let Some(nested_attr) = nested_attr {
+                    let query = QueryExpr::StartsWi(nested_attr, py_value.clone());
+                    evaluate_nested_query(qm, &query)
+                } else {
+                    qm.starts_with(py_value.get_primitive(), all_valid)
+                }
+            } else {
+                Bitmap::new()
+            }
+        },
+        QueryExpr::EndsWi(attr, py_value) => {
+            let (base_attr, nested_attr) = attr_parts(attr.clone());
+            let base_attr_id = INTERNER.intern(&base_attr) as usize;
+
+            if let Some(qm) = index.get(base_attr_id) {
+                if let Some(nested_attr) = nested_attr {
+                    let query = QueryExpr::EndsWi(nested_attr, py_value.clone());
+                    evaluate_nested_query(qm, &query)
+                } else {
+                    qm.ends_with(py_value.get_primitive(), all_valid)
+                }
+            } else {
+                Bitmap::new()
+            }
+        },
+        QueryExpr::Contains(attr, py_value) => {
+            let (base_attr, nested_attr) = attr_parts(attr.clone());
+            let base_attr_id = INTERNER.intern(&base_attr) as usize;
+
+            if let Some(qm) = index.get(base_attr_id) {
+                if let Some(nested_attr) = nested_attr {
+                    let query = QueryExpr::Contains(nested_attr, py_value.clone());
+                    evaluate_nested_query(qm, &query)
+                } else {
+                    qm.contains(py_value.get_primitive(), all_valid)
+                }
+            } else {
+                Bitmap::new()
+            }
+        },
     }
 }
 

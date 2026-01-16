@@ -1,5 +1,5 @@
 
-use std::{ops::Deref, sync::{Arc, Weak}};
+use std::sync::Arc;
 use pyo3::prelude::*;
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;

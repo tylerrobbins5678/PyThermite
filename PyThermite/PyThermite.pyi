@@ -141,6 +141,24 @@ class PyQueryExpr:
         '''    
     ...
 
+# implemented but unstable as an iterable value - major updates needed to support these queries
+
+#    def starts_with(attr, start: str) -> PyQueryExpr:
+#        '''
+#        attribute where the string value starts with the specified start
+#        '''
+#    ...
+#    def ends_with(attr, ends: str) -> PyQueryExpr:
+#        '''
+#        attribute where the string value ends with the specified end
+#        '''
+#    ...
+#    def contains(attr, inner: str) -> PyQueryExpr:
+#        '''
+#        attribute where the string value contains with the specified string
+#        '''
+#    ...
+
 class Indexable:
     '''
     Base class for objects that can be indexed.

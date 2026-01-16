@@ -1,15 +1,15 @@
-use std::{collections::hash_map::Entry, ops::Deref, sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak}};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
 
-use rustc_hash::{FxBuildHasher, FxHashMap};
+use rustc_hash::FxHashMap;
 use croaring::Bitmap;
 use ordered_float::OrderedFloat;
-use pyo3::{Py, Python, types::{PyListMethods, PySetMethods, PyTupleMethods}};
+use pyo3::{Python, types::{PyListMethods, PySetMethods, PyTupleMethods}};
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
 const QUERY_DEPTH_LEN: usize = 12;
 
-use crate::index::{Indexable, core::{query::{attr_parts, b_tree::{composite_key::CompositeKey128, ranged_b_tree::BitMapBTreeIter}}, structures::{hybrid_set::{HybridSet, HybridSetOps}, positional_bitmap::PositionalBitmap, shards::ShardedHashMap}}, types::StrId, value::{PyIterable, PyValue, RustCastValue, StoredIndexable}};
+use crate::index::{core::{query::{attr_parts, b_tree::{composite_key::CompositeKey128, ranged_b_tree::BitMapBTreeIter}}, structures::{hybrid_set::{HybridSet, HybridSetOps}, positional_bitmap::PositionalBitmap, shards::ShardedHashMap}}, types::StrId, value::{PyIterable, PyValue, RustCastValue, StoredIndexable}};
 use crate::index::core::index::IndexAPI;
 use crate::index::core::stored_item::{StoredItem, StoredItemParent};
 use crate::index::core::query::b_tree::{BitMapBTree, Key};
@@ -29,7 +29,7 @@ unsafe impl Send for QueryMap {}
 unsafe impl Sync for QueryMap {}
 
 impl QueryMap {
-    pub fn new(parent: Weak<IndexAPI>, attr_id: StrId) -> Self{
+    pub fn new(parent: Weak<IndexAPI>, attr_id: StrId) -> Self {
         let stored_items = if let Some(p) = parent.upgrade() {
             p.items.clone()
         } else {
@@ -59,12 +59,14 @@ impl QueryMap {
         }
     }
 
+    #[inline]
     fn insert_str(&self, value: &str, obj_id: u32) {
-        self.str_radix_map.write().unwrap().add(value, obj_id);
+        self.write_str_radix_map().add(value, obj_id);
     }
 
+    #[inline]
     fn remove_str(&self, value: &str, obj_id: u32) {
-        self.str_radix_map.write().unwrap().remove(value, obj_id);
+        self.write_str_radix_map().remove(value, obj_id);
     }
 
     fn insert_num_ordered(&self, key: Key, obj_id: u32){
@@ -114,7 +116,7 @@ impl QueryMap {
     fn insert_iterable(&self, iterable: &PyIterable, obj_id: u32){
         Python::with_gil(|py| {
             match iterable {
-                PyIterable::Dict(py_dict) => {
+                PyIterable::Dict(_) => {
 //                    let dict = py_dict.bind(py);
 //                    dict.iter().for_each(|(k, v)| {
 //                        self.iterable.entry(k).or_insert(k)
@@ -162,7 +164,7 @@ impl QueryMap {
             RustCastValue::Bool(_) => self.insert_exact(value, obj_id),
             RustCastValue::Str(extracted_str) => {
                 self.insert_str(extracted_str, obj_id);
-                // self.insert_exact(value, obj_id);
+                self.insert_exact(value, obj_id);
             },
             RustCastValue::Unknown => {
                 self.insert_exact(value, obj_id);
@@ -219,7 +221,7 @@ impl QueryMap {
     fn remove_iterable(&self, iterable: &PyIterable, obj_id: u32) {
         Python::with_gil(|py| {
             match iterable {
-                PyIterable::Dict(py_dict) => {
+                PyIterable::Dict(_) => {
     //                let dict = py_dict.bind(py);
     //                dict.iter().for_each(|(k, v)| {
     //                    self.iterable.entry(k).or_insert(k)
@@ -257,7 +259,7 @@ impl QueryMap {
             }
             RustCastValue::Str(extracted_str) => {
                 self.remove_str(extracted_str, idx);
-                // self.remove_exact(py_value, idx);
+                self.remove_exact(py_value, idx);
             },
             RustCastValue::Bool(_) => self.remove_exact(py_value, idx),
             RustCastValue::Ind(indexable) => {
@@ -354,5 +356,11 @@ impl QueryMap {
     }
     pub fn write_num_ordered(&self) -> std::sync::RwLockWriteGuard<'_, BitMapBTree> {
         self.num_ordered.write().unwrap()
+    }
+    pub fn write_str_radix_map(&self) -> std::sync::RwLockWriteGuard<'_, PositionalBitmap> {
+        self.str_radix_map.write().unwrap()
+    }
+    pub fn read_str_radix_map(&self) -> std::sync::RwLockReadGuard<'_, PositionalBitmap> {
+        self.str_radix_map.read().unwrap()
     }
 }

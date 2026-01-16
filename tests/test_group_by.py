@@ -152,3 +152,16 @@ def test_nested_group_by_many_to_many(index: Index):
 
     for i in range(3):
         assert len(groups[i].collect()) == 1000, f"{i} has invalid length"
+
+def test_nested_str_group_by_many_to_many(index: Index):
+    children = [TestClass(num=str(i)) for i in range(1000)]
+
+    for c in children:
+        c.child = [TestClass(nested_num=str(i)) for i in range(3)]
+
+    index.add_object_many(children)
+
+    groups = index.group_by("child.nested_num")
+
+    for i in range(3):
+        assert len(groups[str(i)].collect()) == 1000, f"{i} has invalid length"

@@ -76,6 +76,7 @@ impl PositionalBitmap {
         }
     }
 
+    #[inline(always)]
     pub fn remove(&mut self, s: &str, id: u32) {
         let bytes = s.as_bytes();
         let start = ((self.map.len() / 2) - (bytes.len() / 2)).saturating_sub(1);
@@ -84,6 +85,7 @@ impl PositionalBitmap {
         }
     }
 
+    #[inline(always)]
     fn get_all(&self) -> Bitmap {
         let mut res = Bitmap::new();
         for i in 0..(self.map.len() + 1) / 2 {
@@ -92,6 +94,7 @@ impl PositionalBitmap {
         res
     }
 
+    #[inline(always)]
     pub fn get_exact(&self, chars: &str) -> Bitmap {
         let mut res = Bitmap::new();
         let bytes = chars.as_bytes();
@@ -147,7 +150,7 @@ impl PositionalBitmap {
         let mut inner_res = Bitmap::new();
         let max_byte_index = bytes.len().saturating_sub(1);
 
-        let lower_bound = usize::max(max_byte_index, self.map.len() / 2);
+        let lower_bound = usize::max(max_byte_index, (self.map.len() / 2).saturating_sub(1));
         for pos in (lower_bound..self.map.len()).rev() {
 
             let byte_map = &self.map[pos];
@@ -194,9 +197,6 @@ impl PositionalBitmap {
         
         let ns = if new_size % 2 != 0 { new_size + 1 } else { new_size };
         let current_len = self.map.len();
-        assert!(ns > current_len);
-        assert!(ns % 2 == 0);
-        assert!(current_len % 2 == 0);
 
         let extra = ns - current_len;
         let pad_front = extra / 2;
@@ -254,6 +254,14 @@ mod tests {
         let result = pb.starts_with("hello very long string");
         assert!(!result.contains(1), "ID 1 should not match 'hello'");
         assert!(!result.contains(2), "ID 2 should not match 'hello'");
+
+        let mut pb = PositionalBitmap::new();
+        pb.add("CA", 1);
+        pb.add("DE", 2);
+
+        let result = pb.starts_with("C");
+        assert!(result.contains(1));
+        assert!(!result.contains(2));
     }
 
     #[test]
@@ -283,6 +291,14 @@ mod tests {
         assert!(!result.contains(1), "ID 1 should not match 'yellow with a long string attached'");
         assert!(!result.contains(2), "ID 2 should not match 'yellow with a long string attached'");
         assert!(!result.contains(3), "ID 3 should not match 'yellow with a long string attached'");
+
+        let mut pb = PositionalBitmap::new();
+        pb.add("a", 1);
+        pb.add("b", 2);
+        pb.add("c", 3);
+
+        let result = pb.ends_with("a");
+        assert!(result.contains(1));
     }
 
     #[test]

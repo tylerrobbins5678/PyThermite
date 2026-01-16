@@ -1,11 +1,7 @@
-use arc_swap::AsRaw;
 use pyo3::{IntoPyObjectExt, PyTypeInfo, prelude::*};
 use pyo3::types::{PyAny, PyDict, PyList, PySet, PyTuple};
 use rustc_hash::FxHasher;
 use smol_str::SmolStr;
-use std::ops::Deref;
-use std::primitive;
-use std::ptr::NonNull;
 use std::sync::Arc;
 use std::{hash::{Hash, Hasher}};
 use pyo3::conversion::IntoPyObject;

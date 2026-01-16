@@ -1,12 +1,12 @@
 
-use std::{fmt, iter::Enumerate, ops::Deref, sync::{Arc, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak}, vec};
+use std::{fmt, sync::{Arc, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak}, vec};
 use croaring::Bitmap;
 use pyo3::prelude::*;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
-use crate::index::{HybridHashmap, Indexable, PyQueryExpr, core::structures::{hybrid_set::{HybridSet, HybridSetOps}, string_interner::{INTERNER, StrInternerView}}, interfaces::filtered_index::FilteredIndex, types::{DEFAULT_INDEXABLE_ARC, IndexTree, StrId}};
+use crate::index::{HybridHashmap, Indexable, PyQueryExpr, core::structures::{hybrid_set::{HybridSet, HybridSetOps}, string_interner::INTERNER}, interfaces::filtered_index::FilteredIndex, types::{DEFAULT_INDEXABLE_ARC, IndexTree, StrId}};
 use crate::index::core::query::{QueryMap, attr_parts, evaluate_query, filter_index_by_hashes, kwargs_to_hash_query};
 
 use crate::index::core::stored_item::StoredItem;
@@ -378,32 +378,32 @@ impl IndexAPI{
             .unwrap_or(false)
     }
 
-    fn get_items_writer(&self) -> RwLockWriteGuard<Vec<StoredItem>> {
+    fn get_items_writer(&self) -> RwLockWriteGuard<'_, Vec<StoredItem>> {
         self.items.write().unwrap()
         //self.items.try_write().expect("items writer deadlock")
     }
 
-    fn get_items_reader(&self) -> RwLockReadGuard<Vec<StoredItem>> {
+    fn get_items_reader(&self) -> RwLockReadGuard<'_, Vec<StoredItem>> {
         self.items.read().unwrap()
         //self.items.try_read().expect("cannot read from items")
     }
 
-    pub fn get_index_writer(&self) -> RwLockWriteGuard<Vec<QueryMap>> {
+    pub fn get_index_writer(&self) -> RwLockWriteGuard<'_, Vec<QueryMap>> {
         self.index.write().unwrap()
         //self.index.try_write().expect("index writer deadlock")
     }
 
-    pub fn get_index_reader(&self) -> RwLockReadGuard<Vec<QueryMap>> {
+    pub fn get_index_reader(&self) -> RwLockReadGuard<'_, Vec<QueryMap>> {
         self.index.read().unwrap()
         //self.index.try_read().expect("cannot read from index")
     }
 
-    fn get_allowed_items_writer(&self) -> RwLockWriteGuard<Bitmap> {
+    fn get_allowed_items_writer(&self) -> RwLockWriteGuard<'_, Bitmap> {
         self.allowed_items.write().unwrap()
         //self.allowed_items.try_write().expect("index writer deadlock")
     }
 
-    fn get_allowed_items_reader(&self) -> RwLockReadGuard<Bitmap> {
+    fn get_allowed_items_reader(&self) -> RwLockReadGuard<'_, Bitmap> {
         self.allowed_items.read().unwrap()
         //self.allowed_items.try_read().expect("cannot read from index")
     }

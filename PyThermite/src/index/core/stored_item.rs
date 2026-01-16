@@ -1,7 +1,7 @@
 use pyo3::{Bound, IntoPyObject, Py, PyAny, PyRef, Python};
 use std::{hash::{Hash, Hasher}, sync::{Arc, Weak}};
 
-use crate::index::{core::{index::IndexAPI, structures::hybrid_set::{HybridSet, HybridSetOps}}, types::{DEFAULT_INDEX_ARC, DEFAULT_INDEXABLE_ARC, DEFAULT_PY_INDEXABLE_ARC, DEFAULT_PY_NONE_ARC, StrId}, value::PyValue};
+use crate::index::{core::{index::IndexAPI, structures::hybrid_set::{HybridSet, HybridSetOps}}, types::{DEFAULT_INDEXABLE_ARC, DEFAULT_PY_INDEXABLE_ARC, StrId}, value::PyValue};
 use crate::index::Indexable;
 
 #[derive(Clone, Debug)]

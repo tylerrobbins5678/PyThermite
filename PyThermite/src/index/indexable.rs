@@ -1,4 +1,3 @@
-use arc_swap::Guard;
 use pyo3::exceptions::PyAttributeError;
 use pyo3::types::PyDictMethods;
 use pyo3::types::PyStringMethods;
@@ -6,7 +5,6 @@ use pyo3::{ffi, IntoPyObjectExt, PyErr, PyRef};
 
 use smallvec::SmallVec;
 use once_cell::sync::Lazy;
-use arc_swap::ArcSwap;
 
 use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -14,8 +12,6 @@ use std::sync::MutexGuard;
 use std::sync::{Arc, Mutex, Weak};
 use std::hash::{Hash, Hasher};
 use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyDict, PyList, PyString}, Bound, Py, PyAny, PyObject, PyResult, Python};
-
-use smol_str::SmolStr;
 
 use crate::index::core::structures::string_interner::INTERNER;
 use crate::index::core::structures::string_interner::StrInternerView;
