@@ -35,6 +35,16 @@ impl CharacterMap {
     }
 
     #[inline(always)]
+    pub fn merge(&mut self, other: &CharacterMap) {
+        unsafe {
+            for byte_id in 0..256 {
+                self.maps_u8.get_unchecked_mut(byte_id).or_inplace(other.contains(byte_id as u8));
+            }
+        }
+        self.boundry_bytes.or_inplace(&other.boundry_bytes);
+    }
+
+    #[inline(always)]
     pub fn contains(&self, byte_id: u8) -> &Bitmap {
         unsafe {
             self.maps_u8.get_unchecked(byte_id as usize)
@@ -191,6 +201,16 @@ impl PositionalBitmap {
             res.or_inplace(&inner_res);
         }
         res
+    }
+
+    pub fn merge(&mut self, other: &PositionalBitmap) {
+        if self.map.len() < other.map.len() {
+            self.expand_map(other.map.len());
+        }
+
+        for (self_cm, other_cm) in self.map.iter_mut().zip(other.map.iter()) {
+            self_cm.merge(other_cm);
+        }
     }
 
     fn expand_map(&mut self, new_size: usize) {

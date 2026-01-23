@@ -85,7 +85,7 @@ def test_performance(prep_data_fixture):
     py_objects = [row for row in data]
 
     cols = ["id", "age", "score", "active", "country", "group", "tags"]
-    
+
     curr = mem_usage_mb()
     start = time.perf_counter()
     df = pd.DataFrame(prep_data_fixture, columns=cols)
@@ -201,7 +201,7 @@ def test_performance(prep_data_fixture):
 #    assert len(filtered_df) == len(filtered_ix)
 
     print(f"Object Build:                   {object_build_time:.4f} s")
-    print(f"Group by operation on ID:       {duration_group:.4f} s")
+    # print(f"Group by operation on ID:       {duration_group:.4f} s")
     print(f"Pandas Filter Build index:      {pandas_build_time:.4f} s | Mem: {mem_pix:.1f} MB")
     print(f"Pandas Filter:                  {duration_df:.6f} s | Mem: {mem_df:.1f} MB | Result size: {len(filtered_df)}")
     print(f"Your Index Filter Build index:  {duration_bix:.4f} s | Mem: {mem_bix:.1f} MB")

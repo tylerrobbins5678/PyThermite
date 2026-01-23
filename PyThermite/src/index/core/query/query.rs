@@ -204,6 +204,10 @@ impl QueryMap {
                 bm_self.or_inplace(&bm_other);
             }
         });
+        self.write_str_radix_map().merge(&other.read_str_radix_map());
+        self.write_num_ordered().merge(&other.read_num_ordered());
+        self.get_masked_ids_writer().or_inplace(&other.get_masked_ids_reader());
+        self.get_mapped_ids_writer().extend(other.get_mapped_ids_reader().iter());
     }
 
     pub fn is_empty(&self) -> bool {

@@ -107,29 +107,6 @@ impl Index {
         })
     }
 
-    pub fn group_by(
-        &self,
-        py: Python,
-        attr: &str
-    ) -> PyResult<FxHashMap<PyValue, FilteredIndex>> {
-        py.allow_threads( move || {
-            let groups = self.inner.group_by(SmolStr::new(attr));
-            let mut res = FxHashMap::default();
-
-            match groups {
-                Some(r) => {
-                    for (py_vals, allowed) in r {
-                        res.insert(py_vals, 
-                            self.inner.filter_from_bitmap(allowed.as_bitmap())
-                        );
-                    }
-                    Ok(res)
-                },
-                None => Ok(res)
-            }
-        })
-    }
-
     pub fn union_with(&self, py: Python, other: &Index) -> PyResult<()>{
         py.allow_threads(|| {
             self.inner.union_with(&other.inner)

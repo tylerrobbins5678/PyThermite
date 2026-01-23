@@ -152,4 +152,60 @@ def test_union_with(index):
     index_2.add_object_many(objs)
 
     index.union_with(index_2)
-    result = index.collect()
+    assert len(index.collect()) == 20
+
+    for i in range(10):
+        res = index.reduced_query(Q.eq("num", i)).collect()
+        assert len(res) == 2
+    
+    for ind in ["A", "B"]:
+        res = index.reduced_query(Q.eq("ind", ind)).collect()
+        assert len(res) == 10
+
+def test_number_collissions_list(index):
+    # this test a new type of issue where bitset algebra is used
+    # to derive the result of iterable objects (list and set)
+    nums = [i for i in range(1024)]
+    nested = TestClass(nums=nums)
+    index.add_object_many([nested])
+    res = index.reduced_query(
+        Q.eq("nums", 1024)
+    )
+    assert len(res.collect()) == 0
+
+    res = index.reduced_query(
+        Q.eq("nums", 1023)
+    )
+    assert len(res.collect()) == 1
+
+def test_number_collissions_set(index):
+    # this test a new type of issue where bitset algebra is used
+    # to derive the result of iterable objects (list and set)
+    nums = set(i for i in range(1024))
+    nested = TestClass(nums=nums)
+    index.add_object_many([nested])
+    res = index.reduced_query(
+        Q.eq("nums", 1024)
+    )
+    assert len(res.collect()) == 0
+
+    res = index.reduced_query(
+        Q.eq("nums", 1023)
+    )
+    assert len(res.collect()) == 1
+
+def test_number_collissions_tuple(index):
+    # this test a new type of issue where bitset algebra is used
+    # to derive the result of iterable objects (list and set)
+    nums = tuple(i for i in range(1024))
+    nested = TestClass(nums=nums)
+    index.add_object_many([nested])
+    res = index.reduced_query(
+        Q.eq("nums", 1024)
+    )
+    assert len(res.collect()) == 0
+
+    res = index.reduced_query(
+        Q.eq("nums", 1023)
+    )
+    assert len(res.collect()) == 1

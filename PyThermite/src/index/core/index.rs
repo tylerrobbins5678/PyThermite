@@ -273,51 +273,40 @@ impl IndexAPI{
     }
 
     pub fn union_with(&self, other: &IndexAPI) -> PyResult<()>{
-        let self_index = self.get_index_reader();
+        let mut self_index = self.get_index_reader();
         let other_index = other.get_index_reader();
 
         if self_index.len() < other_index.len() {
             let additional = other_index.len() - self_index.len();
             drop(self_index);
-            let mut self_index = self.get_index_writer();
-            self_index.reserve(additional);
-            drop(self_index);
+            let mut self_index_writer = self.get_index_writer();
+            self_index_writer.reserve(additional);
+            drop(self_index_writer);
+            self_index = self.get_index_reader();
         }
         
-        let self_index = self.get_index_reader();
         for (self_qm, other_qm) in self_index.iter().zip(other_index.iter()) {
             self_qm.merge(other_qm);
         }
 
+        let mut items_writer = self.get_items_writer();
+
+        // iterate other bitset to get allowed items
+        let other_allowed_items_reader = other.get_allowed_items_reader();
+        let other_items_reader = other.get_items_reader();
+
+        for idx in other_allowed_items_reader.iter(){
+            let other_item = other_items_reader.get(idx as usize).unwrap().clone();
+            if items_writer.len() <= idx as usize{
+                items_writer.resize(usize::max(idx as usize * 2, 1), StoredItem::default());
+            }
+            items_writer[idx as usize] = other_item;
+        }
+        self.get_allowed_items_writer().or_inplace(&other_allowed_items_reader);
+
         Ok(())
     }
 
-    pub fn group_by(&self, attr: SmolStr) -> Option<SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]>> {
-        let index = self.get_index_reader();
-        let (first_attr, _) = attr_parts(attr.clone());
-        let first_attr_id = INTERNER.intern(&first_attr);
-
-        if let Some(attr_map) = index.get(first_attr_id as usize){
-            attr_map.group_by(attr)
-        } else {
-            None
-        }
-    }
-
-//    fn group_by_count(&self, py:Python, attr: &str) -> FxHashMap<PyValue, usize> {
-//        py.allow_threads(||{
-//            let index = self.get_index_reader();
-//            let mut result: FxHashMap<PyValue, usize> = FxHashMap::new();
-//            if let Some(attr_index) = index.get(attr) {
-//                for (value, items) in attr_index {
-//                    result.insert(value.clone(), items.len());
-//                }
-//                result
-//            } else {
-//                FxHashMap::new()
-//            }
-//        })
-//    }
 
     pub fn update_index(
         &self,

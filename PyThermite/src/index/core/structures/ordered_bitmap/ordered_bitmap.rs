@@ -70,6 +70,13 @@ impl NumericBitIndex {
         &self.bits[byte_id]
     }
 
+    #[inline(always)]
+    pub fn merge(&mut self, other: &NumericBitIndex) {
+        for byte_id in 0..2 {
+            self.bits[byte_id].or_inplace(&other.bits[byte_id]);
+        }
+    }
+
     pub fn all(&self) -> Bitmap {
         Bitmap::fast_or(
             &[
@@ -135,6 +142,12 @@ impl NumericalBitmap {
         let mut res = Bitmap::new();
         self.get_exact_into(value, &mut res);
         res
+    }
+
+    pub fn merge(&mut self, other: &NumericalBitmap) {
+        for (self_bit, other_bit) in self.bits.iter_mut().zip(other.bits.iter()) {
+            self_bit.merge(other_bit);
+        }
     }
 
     #[inline(always)]
