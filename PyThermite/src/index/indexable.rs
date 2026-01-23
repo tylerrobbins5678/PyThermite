@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex, Weak};
 use std::hash::{Hash, Hasher};
 use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyDict, PyList, PyString}, Bound, Py, PyAny, PyObject, PyResult, Python};
 
+use crate::index::core::id_alloc::allocate_id;
+use crate::index::core::id_alloc::free_id;
 use crate::index::core::structures::string_interner::INTERNER;
 use crate::index::core::structures::string_interner::StrInternerView;
 use crate::index::types::DEFAULT_INDEX_ARC;
@@ -20,26 +22,6 @@ use crate::index::types::StrId;
 use crate::index::value::PyValue;
 use crate::index::HybridHashmap;
 use crate::index::core::index::IndexAPI;
-
-static GLOBAL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
-
-static FREE_IDS: Lazy<Mutex<Vec<u32>>> = Lazy::new(|| Mutex::new(Vec::new()));
-
-
-pub fn allocate_id() -> u32 {
-    let mut free = FREE_IDS.lock().unwrap();
-
-    if let Some(id) = free.pop() {
-        id
-    } else {
-        GLOBAL_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
-    }
-}
-
-pub fn free_id(id: u32) {
-    let mut free = FREE_IDS.lock().unwrap();
-    free.push(id);
-}
 
 
 struct IndexMeta{

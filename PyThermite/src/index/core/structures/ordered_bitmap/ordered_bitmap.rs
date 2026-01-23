@@ -3,6 +3,7 @@ use std::{cell::RefCell, sync::OnceLock};
 use croaring::Bitmap;
 
 pub(crate) const BIT_LENGTH: usize = 76; // do not use the whole 128
+const BUFF_SIZE: usize = 128;
 
 thread_local! {
     pub(crate) static TMP_BITMAP: RefCell<Bitmap> = RefCell::new(Bitmap::new());
@@ -11,6 +12,8 @@ thread_local! {
 #[derive(Debug, Clone)]
 pub(crate) struct NumericBitIndex {
     bits: [Bitmap; 2],
+    buffer: [[u32; BUFF_SIZE]; 2],
+    buff_length: [usize; 2]
 }
 
 impl NumericBitIndex {
@@ -20,33 +23,59 @@ impl NumericBitIndex {
 
     #[inline(always)]
     pub fn add(&mut self, byte_id: usize, id: u32) {
+        self.bits[byte_id].add(id)
+    }
+
+    #[inline(always)]
+    pub fn add_delayed(&mut self, byte_id: usize, id: u32) {
+        let mut len = self.buff_length[byte_id];
+
+        if len == BUFF_SIZE {
+            self.flush_byte_id(byte_id, len);
+            len = 0;
+        }
+
         unsafe {
-            self.bits.get_unchecked_mut(byte_id).add(id)
+            *self
+                .buffer
+                .get_unchecked_mut(byte_id)
+                .get_unchecked_mut(len) = id;
+        }
+
+        self.buff_length[byte_id] = len + 1;
+    }
+
+    #[inline(always)]
+    pub fn flush_byte_id(&mut self, byte_id: usize, len: usize){
+        self.bits[byte_id].add_many(
+            &self.buffer[byte_id][0..len]
+        );
+        self.buff_length[byte_id] = 0;
+    }
+
+    #[inline(always)]
+    pub fn flush(&mut self) {
+        for byte_id in 0..2 {
+            self.flush_byte_id(byte_id, self.buff_length[byte_id]);
         }
     }
 
     #[inline(always)]
     pub fn remove(&mut self, byte_id: usize, id: u32) {
-        unsafe {
-            self.bits.get_unchecked_mut(byte_id).remove(id)
-        }
+        self.bits[byte_id].remove(id)
     }
 
     #[inline(always)]
     pub fn contains(&self, byte_id: usize) -> &Bitmap {
-        unsafe {
-            self.bits.get_unchecked(byte_id)
-        }
+        &self.bits[byte_id]
     }
 
     pub fn all(&self) -> Bitmap {
         Bitmap::fast_or(
-            unsafe{
-                &[
-                    self.bits.get_unchecked(0 as usize),
-                    self.bits.get_unchecked(1 as usize)
-                ]
-            }
+            &[
+                &self.bits[0 as usize],
+                &self.bits[1 as usize]
+            ]
         )
     }
 }
@@ -55,6 +84,8 @@ impl Default for NumericBitIndex {
     fn default() -> Self {
         Self { 
             bits: std::array::from_fn( |_| Bitmap::new()),
+            buffer: [[0u32; BUFF_SIZE]; 2],
+            buff_length: [0; 2]
         }
     }
 }
@@ -72,8 +103,15 @@ impl NumericalBitmap {
     #[inline(always)]
     pub fn add(&mut self, value: u128, id: u32) {
         for bit in 0..BIT_LENGTH {
-            let v = ((value >> bit) & 1) as usize;
+            let v = (value >> bit) as usize & 1;
             self.bits[bit].add(v, id);
+        }
+    }
+
+    pub fn add_delayed(&mut self, value: u128, id: u32) {
+        for bit in 0..BIT_LENGTH {
+            let v = (value >> bit) as usize & 1;
+            self.bits[bit].add_delayed(v, id);
         }
     }
 
@@ -82,6 +120,13 @@ impl NumericalBitmap {
         for bit in 0..BIT_LENGTH {
             let v = ((value >> bit) & 1) as usize;
             self.bits[bit].remove(v, id);
+        }
+    }
+
+    #[inline(always)]
+    pub fn flush(&mut self) {
+        for bit in 0..BIT_LENGTH {
+            self.bits[bit].flush();
         }
     }
 

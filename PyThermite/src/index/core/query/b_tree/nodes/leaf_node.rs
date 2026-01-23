@@ -4,7 +4,7 @@ use std::{ops::Bound, ptr};
 
 use croaring::Bitmap;
 
-use crate::index::core::query::b_tree::{FULL_KEYS, Key, MAX_KEYS, composite_key::CompositeKey128};
+use crate::index::core::{query::b_tree::{FULL_KEYS, Key, MAX_KEYS}, structures::composite_key::CompositeKey128};
 
 
 #[derive(Debug, Clone)]

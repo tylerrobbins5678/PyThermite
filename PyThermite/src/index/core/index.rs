@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
-use crate::index::{HybridHashmap, Indexable, PyQueryExpr, core::structures::{hybrid_set::{HybridSet, HybridSetOps}, string_interner::INTERNER}, interfaces::filtered_index::FilteredIndex, types::{DEFAULT_INDEXABLE_ARC, IndexTree, StrId}};
+use crate::index::{HybridHashmap, Indexable, PyQueryExpr, core::{query::BulkQueryMapAdder, structures::{hybrid_set::{HybridSet, HybridSetOps}, string_interner::INTERNER}}, interfaces::filtered_index::FilteredIndex, types::{DEFAULT_INDEXABLE_ARC, IndexTree, StrId}};
 use crate::index::core::query::{QueryMap, attr_parts, evaluate_query, filter_index_by_hashes, kwargs_to_hash_query};
 
 use crate::index::core::stored_item::StoredItem;
@@ -36,9 +36,10 @@ impl IndexAPI{
     pub fn collect(&self, py:Python) -> PyResult<Vec<Py<Indexable>>> {
         let mut result = vec![];
         let allowed_items = self.get_allowed_items_reader();
+        let items_reader = self.get_items_reader();
 
         for idx in allowed_items.iter(){
-            result.push(self.get_items_reader().get(idx as usize).unwrap().get_py_ref(py));
+            result.push(items_reader[idx as usize].get_py_ref(py));
         }
         Ok(result)
     }
@@ -101,11 +102,38 @@ impl IndexAPI{
         drop(allowed_writer);
         drop(items_writer);
 
+        let mut writer = self.get_index_writer();
+        let mut delayed_adders: Vec<BulkQueryMapAdder> = writer.iter().map(|i| {
+            i.get_bulk_writer()
+        }).collect();
+
         for (rust_handle, _) in arc_objs {
+            let object_id = rust_handle.id;
             for (key, value) in rust_handle.get_py_values().iter() {
-                self.add_index(weak_self.clone(), rust_handle.id, *key, value);
+                let attr_id = *key as usize;
+                if let Some(qmap) = delayed_adders.get_mut(attr_id) {
+                    qmap.insert(value, object_id);
+                } else {
+                    drop(delayed_adders);
+                    let qmap = QueryMap::new(weak_self.clone(), *key);
+                    qmap.insert(value, object_id);
+                    if attr_id >= writer.len() {
+                        writer.resize_with((attr_id + 1) as usize, Default::default); // or None if Option
+                    }
+                    writer[attr_id as usize] = qmap;
+
+                    delayed_adders = writer.iter().map(|i| {
+                        i.get_bulk_writer()
+                    }).collect();
+                }
             }
         }
+
+//        for (rust_handle, _) in arc_objs {
+//            for (key, value) in rust_handle.get_py_values().iter() {
+//                self.add_index(weak_self.clone(), rust_handle.id, *key, value);
+//            }
+//        }
     }
 
     pub fn has_object_id(&self, id: u32) -> bool {
@@ -338,7 +366,6 @@ impl IndexAPI{
             writer.resize_with((attr_id + 1) as usize, Default::default); // or None if Option
         }
         writer[attr_id as usize] = qmap;
-
     }
 
     fn remove_index(

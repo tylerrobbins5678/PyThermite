@@ -7,158 +7,114 @@ use ordered_float::OrderedFloat;
 use pyo3::{PyAny, PyResult, types::{PyAnyMethods, PyString}};
 use smol_str::SmolStr;
 
-use crate::index::{core::{query::QueryMap, structures::{hybrid_set::{HybridSetOps}, string_interner::{INTERNER, StrInternerView}}}, interfaces::PyQueryExpr, value::{PyValue, RustCastValue}};
-use crate::index::core::query::b_tree::Key;
+use crate::index::{core::{query::QueryMap, structures::{composite_key::CompositeKey128, hybrid_set::HybridSetOps, string_interner::{INTERNER, StrInternerView}}}, interfaces::PyQueryExpr, value::{PyValue, RustCastValue}};
 
 impl QueryMap {
 
     pub fn gt(&self, val: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
         // strictly greater than
-        match val {
+        let mut res = match val {
             RustCastValue::Int(i) => {
-                self.read_num_ordered().range_query(
-                    Bound::Excluded(&Key::Int(*i)),
-                    Bound::Unbounded,
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_i64_to_float76(*i);
+                self.read_num_ordered().get_gt_from_valid(bits, all_valid)
             }
             RustCastValue::Float(f) => {
-                self.read_num_ordered().range_query(
-                    Bound::Excluded(&Key::FloatOrdered(OrderedFloat(*f))),
-                    Bound::Unbounded,
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_f64_to_float76(OrderedFloat(*f));
+                self.read_num_ordered().get_gt_from_valid(bits, all_valid)
             }
-            RustCastValue::Str(_) => {
-                Bitmap::new()
-            }
-            RustCastValue::Ind(_) => todo!(),
             _ => {
                 Bitmap::new()
             }
-        }
+        };
+        self.unmask_ids(&mut res);
+        res
     }
 
     pub fn ge(&self, val: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
         // strictly greater than
-        match val {
+        let mut res = match val {
             RustCastValue::Int(i) => {
-                self.read_num_ordered().range_query(
-                    Bound::Included(&Key::Int(*i)),
-                    Bound::Unbounded,
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_i64_to_float76(*i);
+                self.read_num_ordered().get_gte_from_valid(bits, all_valid)
             }
             RustCastValue::Float(f) => {
-                self.read_num_ordered().range_query(
-                    Bound::Included(&Key::FloatOrdered(OrderedFloat(*f))),
-                    Bound::Unbounded,
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_f64_to_float76(OrderedFloat(*f));
+                self.read_num_ordered().get_gte_from_valid(bits, all_valid)
             }
-            RustCastValue::Str(_) => {
-                Bitmap::new()
-            }
-            RustCastValue::Ind(_) => todo!(),
             _ => {
                 Bitmap::new()
             }
-        }
+        };
+        self.unmask_ids(&mut res);
+        res
     }
 
     pub fn lt(&self, val: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
-        match val {
+        let mut res = match val {
             RustCastValue::Int(i) => {
-                self.read_num_ordered().range_query(
-                    Bound::Unbounded,
-                    Bound::Excluded(&Key::Int(*i)),
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_i64_to_float76(*i);
+                self.read_num_ordered().get_lt_from_valid(bits, all_valid)
             }
             RustCastValue::Float(f) => {
-                self.read_num_ordered().range_query(
-                    Bound::Unbounded,
-                    Bound::Excluded(&Key::FloatOrdered(OrderedFloat(*f))),
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_f64_to_float76(OrderedFloat(*f));
+                self.read_num_ordered().get_lt_from_valid(bits, all_valid)
             }
-            RustCastValue::Str(_) => {
-                Bitmap::new()
-            }
-            RustCastValue::Ind(_) => todo!(),
             _ => {
                 Bitmap::new()
             }
-        }
+        };
+        self.unmask_ids(&mut res);
+        res
     }
 
     pub fn le(&self, val: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
         // strictly greater than
-        match val {
+        let mut res = match val {
             RustCastValue::Int(i) => {
-                self.read_num_ordered().range_query(
-                    Bound::Unbounded,
-                    Bound::Included(&Key::Int(*i)),
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_i64_to_float76(*i);
+                self.read_num_ordered().get_lte_from_valid(bits, all_valid)
             }
             RustCastValue::Float(f) => {
-                self.read_num_ordered().range_query(
-                    Bound::Unbounded,
-                    Bound::Included(&Key::FloatOrdered(OrderedFloat(*f))),
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_f64_to_float76(OrderedFloat(*f));
+                self.read_num_ordered().get_lte_from_valid(bits, all_valid)
             }
-            RustCastValue::Str(_) => {
-                Bitmap::new()
-            }
-            RustCastValue::Ind(_) => todo!(),
             _ => {
                 Bitmap::new()
             }
-        }
+        };
+        self.unmask_ids(&mut res);
+        res
     }
 
     pub fn bt(&self, lower: &RustCastValue, upper: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
         let low_range = match lower {
-            RustCastValue::Int(i) => Key::Int(*i),
-            RustCastValue::Float(f) => Key::FloatOrdered(OrderedFloat(*f)),
-            RustCastValue::Str(_) => todo!(),
-            RustCastValue::Ind(_) => todo!(),
+            RustCastValue::Int(i) => CompositeKey128::encode_i64_to_float76(*i),
+            RustCastValue::Float(f) => CompositeKey128::encode_f64_to_float76(OrderedFloat(*f)),
             _ => todo!(),
         };
 
         let upper_range = match upper {
-            RustCastValue::Int(i) => Key::Int(*i),
-            RustCastValue::Float(f) => Key::FloatOrdered(OrderedFloat(*f)),
-            RustCastValue::Str(_) => todo!(),
-            RustCastValue::Ind(_) => todo!(),
+            RustCastValue::Int(i) => CompositeKey128::encode_i64_to_float76(*i),
+            RustCastValue::Float(f) => CompositeKey128::encode_f64_to_float76(OrderedFloat(*f)),
             _ => todo!(),
         };
 
-        self.read_num_ordered().range_query(
-            Bound::Included(&low_range),
-            Bound::Included(&upper_range),
-            all_valid
-        )
+        let reader = self.read_num_ordered();
+        let mut res = reader.get_bt_from_valid(low_range, upper_range, all_valid);
+        self.unmask_ids(&mut res);
+        res
     }
 
     pub fn eq(&self, val: &PyValue, all_valid: &Bitmap) -> Bitmap {
 
-        match val.get_primitive() {
+        let mut res = match val.get_primitive() {
             RustCastValue::Int(i) => {
-                self.read_num_ordered().range_query(
-                    Bound::Included(&Key::Int(*i)),
-                    Bound::Included(&Key::Int(*i)),
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_i64_to_float76(*i);
+                self.read_num_ordered().get_exact(bits)
             }
             RustCastValue::Float(f) => {
-                self.read_num_ordered().range_query(
-                    Bound::Included(&Key::FloatOrdered(OrderedFloat(*f))),
-                    Bound::Included(&Key::FloatOrdered(OrderedFloat(*f))),
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_f64_to_float76(OrderedFloat(*f));
+                self.read_num_ordered().get_exact(bits)
             }
             RustCastValue::Str(extracted_str) => {
                 self.str_radix_map.read().unwrap().get_exact(extracted_str)
@@ -170,41 +126,46 @@ impl QueryMap {
                     Bitmap::new()
                 }
             }
-        }
+        };
+        self.unmask_ids(&mut res);
+        res
     }
 
     fn starts_with(&self, start: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
-        match start {
+        let mut res = match start {
             RustCastValue::Str(smol_str) => {
-                let mut res = self.read_str_radix_map().starts_with(smol_str);
-                res.and_inplace(all_valid);
+                let res = self.read_str_radix_map().starts_with(smol_str);
                 res
             },
             _ => Bitmap::new(),
-        }
+        };
+        self.unmask_ids(&mut res);
+        res
     }
 
 
     fn ends_with(&self, end: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
-        match end {
+       let mut res =  match end {
             RustCastValue::Str(smol_str) => {
-                let mut res = self.read_str_radix_map().ends_with(smol_str);
-                res.and_inplace(all_valid);
+                let res = self.read_str_radix_map().ends_with(smol_str);
                 res
             },
             _ => Bitmap::new(),
-        }
+        };
+        self.unmask_ids(&mut res);
+        res
     }
 
     fn contains(&self, inner: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
-        match inner {
+        let mut res = match inner {
             RustCastValue::Str(smol_str) => {
-                let mut res = self.read_str_radix_map().contains(smol_str);
-                res.and_inplace(all_valid);
+                let res = self.read_str_radix_map().contains(smol_str);
                 res
             },
             _ => Bitmap::new(),
-        }
+        };
+        self.unmask_ids(&mut res);
+        res
     }
 
 }
@@ -270,6 +231,27 @@ pub enum QueryExpr {
     StartsWi(SmolStr, PyValue),
     EndsWi(SmolStr, PyValue),
     Contains(SmolStr, PyValue),
+}
+
+impl QueryExpr {
+    pub fn estimated_cost(&self) -> u32 {
+        match self {
+            QueryExpr::Eq(_, _) => 0,
+            QueryExpr::Ne(_, _) => 1,
+            QueryExpr::Not(_) => 2,
+            QueryExpr::In(_, _) => 3,
+            QueryExpr::StartsWi(_, _) => 4,
+            QueryExpr::EndsWi(_, _) => 5,
+            QueryExpr::Contains(_, _) => 6,
+            QueryExpr::And(_) => 7,
+            QueryExpr::Or(_) => 8,
+            QueryExpr::Lt(_, _) => 9,
+            QueryExpr::Le(_, _) => 10,
+            QueryExpr::Bt(_, _, _) => 11,
+            QueryExpr::Gt(_, _) => 12,
+            QueryExpr::Ge(_, _) => 13,
+        }
+    }
 }
 
 pub fn attr_parts(attr: SmolStr) -> (SmolStr, Option<SmolStr>) {
@@ -420,20 +402,21 @@ pub fn evaluate_query(
                 all_valid - &inner_bm
         }
         QueryExpr::And(exprs) => {
+            evaluate_and_queries_vec(index, all_valid, exprs)
             // Evaluate all queries in parallel
-            let mut bitmaps: Vec<Bitmap> = evaluate_queries_vec(index, all_valid, exprs);
-            bitmaps.sort_by_key(|bm| bm.cardinality());
-
-            // Reduce using AND in parallel
-            let result = bitmaps
-                .into_iter()
-                .reduce(|mut a, b| {
-                    a.and_inplace(&b); // mutate `a` in-place
-                    a
-                })
-                .unwrap_or_else(Bitmap::new); // handle empty exprs
-
-            result
+//            let mut bitmaps: Vec<Bitmap> = evaluate_queries_vec(index, all_valid, exprs);
+//            bitmaps.sort_by_key(|bm| bm.cardinality());
+//
+//            // Reduce using AND in parallel
+//            let result = bitmaps
+//                .into_iter()
+//                .reduce(|mut a, b| {
+//                    a.and_inplace(&b); // mutate `a` in-place
+//                    a
+//                })
+//                .unwrap_or_else(Bitmap::new); // handle empty exprs
+//
+//            result
         }
         QueryExpr::Or(exprs) => {
             evaluate_queries_vec(index, all_valid, exprs)
@@ -502,6 +485,21 @@ pub fn evaluate_queries_vec(
         .iter()
         .map(|expr| evaluate_query(index, &all_valid, expr))
         .collect()
+}
+
+pub fn evaluate_and_queries_vec(
+    index: &Vec<QueryMap>,
+    all_valid: &Bitmap,
+    exprs: &Vec<QueryExpr>,
+) -> Bitmap {
+    let mut all_valid = all_valid.clone();
+
+    let mut ordered: Vec<&QueryExpr> = exprs.iter().collect();
+    ordered.sort_by_key(|expr| expr.estimated_cost());
+    for o in ordered {
+        all_valid.and_inplace(&evaluate_query(index, &all_valid, o));
+    }
+    all_valid
 }
 
 pub fn kwargs_to_hash_query<'py>(

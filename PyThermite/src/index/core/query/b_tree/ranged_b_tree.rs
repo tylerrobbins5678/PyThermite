@@ -1,7 +1,7 @@
 use std::ops::Bound;
 use croaring::Bitmap;
 
-use crate::index::core::query::b_tree::{Key, composite_key::CompositeKey128, nodes::{InternalNode, InternalNodeIter, LeafNode, LeafNodeIter}};
+use crate::index::core::{query::b_tree::{Key, nodes::{InternalNode, InternalNodeIter, LeafNode, LeafNodeIter}}, structures::composite_key::CompositeKey128};
 
 pub const MAX_KEYS: usize = 96;
 pub const FILL_FACTOR: f64 = 0.97;

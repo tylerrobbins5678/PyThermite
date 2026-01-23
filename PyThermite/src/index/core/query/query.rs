@@ -9,7 +9,7 @@ use smol_str::SmolStr;
 
 const QUERY_DEPTH_LEN: usize = 12;
 
-use crate::index::{core::{query::{attr_parts, b_tree::{composite_key::CompositeKey128, ranged_b_tree::BitMapBTreeIter}}, structures::{hybrid_set::{HybridSet, HybridSetOps}, positional_bitmap::PositionalBitmap, shards::ShardedHashMap}}, types::StrId, value::{PyIterable, PyValue, RustCastValue, StoredIndexable}};
+use crate::index::{Index, core::{id_alloc::{allocate_id, free_id}, query::{BulkQueryMapAdder, attr_parts, b_tree::ranged_b_tree::BitMapBTreeIter}, structures::{composite_key::CompositeKey128, hybrid_set::{HybridSet, HybridSetOps}, ordered_bitmap::NumericalBitmap, positional_bitmap::PositionalBitmap, shards::ShardedHashMap}}, types::StrId, value::{PyIterable, PyValue, RustCastValue, StoredIndexable}};
 use crate::index::core::index::IndexAPI;
 use crate::index::core::stored_item::{StoredItem, StoredItemParent};
 use crate::index::core::query::b_tree::{BitMapBTree, Key};
@@ -19,9 +19,11 @@ pub struct QueryMap {
     pub exact: ShardedHashMap<PyValue, HybridSet>,
     pub str_radix_map: RwLock<PositionalBitmap>,
     pub parent: Weak<IndexAPI>,
-    pub num_ordered: RwLock<BitMapBTree>,
+    pub num_ordered: RwLock<NumericalBitmap>,
     pub nested: Arc<IndexAPI>,
     pub attr_stored: StrId,
+    pub mapped_ids: RwLock<FxHashMap<u32, u32>>,
+    pub masked_ids: RwLock<Bitmap>,
     stored_items: Arc<RwLock<Vec<StoredItem>>>,
 }
 
@@ -40,14 +42,16 @@ impl QueryMap {
             str_radix_map: RwLock::new(PositionalBitmap::new()),
             attr_stored: attr_id,
             parent: parent.clone(),
-            num_ordered: RwLock::new(BitMapBTree::new()),
+            num_ordered: RwLock::new(NumericalBitmap::new()),
             nested: Arc::new(IndexAPI::new(Some(parent))),
+            mapped_ids: FxHashMap::default().into(),
+            masked_ids: RwLock::new(Bitmap::new()),
             stored_items
         }
     }
 
     #[inline(always)]
-    fn insert_exact(&self, value: &PyValue, obj_id: u32){
+    pub(crate) fn insert_exact(&self, value: &PyValue, obj_id: u32){
         let mut shard = self.exact.get_shard(&value);
         match shard.get_mut (value) {
             Some(hs) => {
@@ -70,16 +74,18 @@ impl QueryMap {
     }
 
     fn insert_num_ordered(&self, key: Key, obj_id: u32){
+        let composit_key = CompositeKey128::new(key, obj_id);
         let mut writer = self.write_num_ordered();
-        writer.insert(key, obj_id);
+        writer.add(composit_key.get_value_bits(), obj_id);
     }
 
     fn remove_num_ordered(&self, key: Key, obj_id: u32){
+        let composit_key = CompositeKey128::new(key, obj_id);
         let mut writer = self.write_num_ordered();
-        writer.remove(key, obj_id);
+        writer.remove(composit_key.get_value_bits(), obj_id);
     }
 
-    fn insert_indexable(&self, index_obj: &StoredIndexable, obj_id: u32){
+    pub(crate) fn insert_indexable(&self, index_obj: &StoredIndexable, obj_id: u32){
         let mut path = HybridSet::new();
 
         if let Some(parent) = self.parent.upgrade() {
@@ -125,17 +131,26 @@ impl QueryMap {
 
                 PyIterable::List(py_list) => {
                     for item in py_list.bind(py).iter(){
-                        self.insert(&PyValue::new(item), obj_id);
+                        let index_id = allocate_id();
+                        self.get_mapped_ids_writer().insert(index_id, obj_id);
+                        self.get_masked_ids_writer().add(index_id);
+                        self.insert(&PyValue::new(item), index_id);
                     }
                 },
                 PyIterable::Tuple(py_tuple) => {
                     for item in py_tuple.bind(py).iter(){
-                        self.insert(&PyValue::new(item), obj_id);
+                        let index_id = allocate_id();
+                        self.get_mapped_ids_writer().insert(index_id, obj_id);
+                        self.get_masked_ids_writer().add(index_id);
+                        self.insert(&PyValue::new(item), index_id);
                     }
                 }
                 PyIterable::Set(py_set) => {
                     for item in py_set.bind(py).iter(){
-                        self.insert(&PyValue::new(item), obj_id);
+                        let index_id = allocate_id();
+                        self.get_mapped_ids_writer().insert(index_id, obj_id);
+                        self.get_masked_ids_writer().add(index_id);
+                        self.insert(&PyValue::new(item), index_id);
                     }
                 },
             }
@@ -164,7 +179,7 @@ impl QueryMap {
             RustCastValue::Bool(_) => self.insert_exact(value, obj_id),
             RustCastValue::Str(extracted_str) => {
                 self.insert_str(extracted_str, obj_id);
-                self.insert_exact(value, obj_id);
+                // self.insert_exact(value, obj_id);
             },
             RustCastValue::Unknown => {
                 self.insert_exact(value, obj_id);
@@ -230,17 +245,38 @@ impl QueryMap {
 
                 PyIterable::List(py_list) => {
                     for item in py_list.bind(py).iter(){
-                        self.remove_id(&PyValue::new(item), obj_id);
+                        let mut writer = self.get_mapped_ids_writer();
+                        let mut ids_writer = self.get_masked_ids_writer();
+                        writer.get(&obj_id).map(|mapped_id| {
+                            free_id(*mapped_id);
+                            ids_writer.remove(*mapped_id);
+                            self.remove_id(&PyValue::new(item), *mapped_id);
+                        });
+                        writer.remove(&obj_id);
                     }
                 },
                 PyIterable::Tuple(py_tuple) => {
                     for item in py_tuple.bind(py).iter(){
-                        self.remove_id(&PyValue::new(item), obj_id);
+                        let mut writer = self.get_mapped_ids_writer();
+                        let mut ids_writer = self.get_masked_ids_writer();
+                        writer.get(&obj_id).map(|mapped_id| {
+                            free_id(*mapped_id);
+                            ids_writer.remove(*mapped_id);
+                            self.remove_id(&PyValue::new(item), *mapped_id);
+                        });
+                        writer.remove(&obj_id);
                     }
                 }
                 PyIterable::Set(py_set) => {
                     for item in py_set.bind(py).iter(){
-                        self.remove_id(&PyValue::new(item), obj_id);
+                        let mut writer = self.get_mapped_ids_writer();
+                        let mut ids_writer = self.get_masked_ids_writer();
+                        writer.get(&obj_id).map(|mapped_id| {
+                            free_id(*mapped_id);
+                            ids_writer.remove(*mapped_id);
+                            self.remove_id(&PyValue::new(item), *mapped_id);
+                        });
+                        writer.remove(&obj_id);
                     }
                 },
             }
@@ -259,7 +295,7 @@ impl QueryMap {
             }
             RustCastValue::Str(extracted_str) => {
                 self.remove_str(extracted_str, idx);
-                self.remove_exact(py_value, idx);
+                // self.remove_exact(py_value, idx);
             },
             RustCastValue::Bool(_) => self.remove_exact(py_value, idx),
             RustCastValue::Ind(indexable) => {
@@ -275,6 +311,27 @@ impl QueryMap {
         };
     }
 
+    pub fn unmask_ids(&self, ids: &mut Bitmap) {
+        let to_find = self.get_masked_ids_reader().and(ids);
+        ids.andnot_inplace(&to_find);
+        let mapping = self.get_mapped_ids_reader();
+        let mut buff = [0u32; 1024];
+        let mut buff_size = 0;
+        let mut res = Bitmap::new();
+        for i in to_find.iter() {
+            if let Some(mapped_id) = mapping.get(&i) {
+                buff[buff_size] = *mapped_id;
+                buff_size += 1;
+            }
+            if buff_size >= 1024 {
+                res.add_many(&buff[0..buff_size]);
+                buff_size = 0;
+            }
+        }
+        res.add_many(&buff[0..buff_size]);
+        ids.or_inplace(&res);
+    }
+
     pub fn remove(&self, filter_bm: &HybridSet) {
         self.exact.for_each_mut(|_, bm| {
             bm.and_inplace(filter_bm);
@@ -282,62 +339,7 @@ impl QueryMap {
     }
 
     pub fn group_by(&self, sub_query: SmolStr) -> Option<SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]>> {
-        let (_, parts) = attr_parts(sub_query);
-        match parts {
-            Some(rest) => {
-                let groups = self.nested.group_by(rest);
-                if let Some(r) = groups {
-                    
-                    let mut res: SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]> = SmallVec::new();
-                    for (py_value, allowed) in r {
-                        let allowed_parents = self.get_allowed_parents(&allowed.as_bitmap());
-                        res.push((py_value, allowed_parents));
-                    }
-                    Some(res)
-                } else {
-                    None
-                }
-            },
-            None => {
-                let mut res:SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]> = SmallVec::new();
-                self.exact.for_each(|k, v| {
-                    res.push((k.clone(), v.clone()));
-                });
-
-                let iter_guard = &self.read_num_ordered();
-                let bitmap_iter = BitMapBTreeIter::new(iter_guard);
-
-                let mut current_val: Option<CompositeKey128> = None;
-                let mut current_bitmap: Bitmap = Bitmap::new();
-
-                for composite_key in bitmap_iter {
-                    let id = composite_key.get_id();
-
-                    if let Some(prev_ck) = current_val {
-                        if prev_ck.get_value_bits() != composite_key.get_value_bits() {
-                            // Flush previous group
-                            let pyval = PyValue::from_primitave(RustCastValue::Float(prev_ck.decode_float()));
-                            let hset = HybridSet::Large(current_bitmap.clone());
-                            res.push((pyval, hset));
-                            current_bitmap.clear();
-                        }
-                    }
-
-                    // Update current value and accumulate IDs
-                    current_val = Some(composite_key);
-                    current_bitmap.add(id);
-                }
-
-                // push last group
-                if let Some(cv) = current_val {
-                    let pyval = PyValue::from_primitave(RustCastValue::Float(cv.decode_float()));
-                    let hset = HybridSet::Large(current_bitmap);
-                    res.push((pyval, hset));
-                }
-
-                Some(res)
-            },
-        }
+        None
     }
 
     pub fn get_allowed_parents(&self, child_bm: &Bitmap) -> HybridSet {
@@ -351,10 +353,10 @@ impl QueryMap {
 
 
 impl QueryMap {
-    pub fn read_num_ordered(&self) -> std::sync::RwLockReadGuard<'_, BitMapBTree> {
+    pub fn read_num_ordered(&self) -> std::sync::RwLockReadGuard<'_, NumericalBitmap> {
         self.num_ordered.read().unwrap()
     }
-    pub fn write_num_ordered(&self) -> std::sync::RwLockWriteGuard<'_, BitMapBTree> {
+    pub fn write_num_ordered(&self) -> std::sync::RwLockWriteGuard<'_, NumericalBitmap> {
         self.num_ordered.write().unwrap()
     }
     pub fn write_str_radix_map(&self) -> std::sync::RwLockWriteGuard<'_, PositionalBitmap> {
@@ -362,5 +364,23 @@ impl QueryMap {
     }
     pub fn read_str_radix_map(&self) -> std::sync::RwLockReadGuard<'_, PositionalBitmap> {
         self.str_radix_map.read().unwrap()
+    }
+    pub fn get_mapped_ids_reader(&self) -> std::sync::RwLockReadGuard<'_, FxHashMap<u32, u32>> {
+        self.mapped_ids.read().unwrap()
+    }
+    pub fn get_mapped_ids_writer(&self) -> std::sync::RwLockWriteGuard<'_, FxHashMap<u32, u32>> {
+        self.mapped_ids.write().unwrap()
+    }
+    pub fn get_masked_ids_reader(&self) -> std::sync::RwLockReadGuard<'_, Bitmap> {
+        self.masked_ids.read().unwrap()
+    }
+    pub fn get_masked_ids_writer(&self) -> std::sync::RwLockWriteGuard<'_, Bitmap> {
+        self.masked_ids.write().unwrap()
+    }
+}
+
+impl QueryMap {
+    pub fn get_bulk_writer(&self) -> BulkQueryMapAdder {
+        BulkQueryMapAdder::new(self)
     }
 }

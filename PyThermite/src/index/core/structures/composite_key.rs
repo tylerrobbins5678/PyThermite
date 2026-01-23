@@ -43,7 +43,7 @@ impl CompositeKey128 {
     }
 
     #[inline(always)]
-    fn encode_f64_to_float76(val: OrderedFloat<f64>) -> u128 {
+    pub fn encode_f64_to_float76(val: OrderedFloat<f64>) -> u128 {
 
         if val.0 == 0.0 {
             return 1u128 << SIGN_BIT_POS;
@@ -82,7 +82,7 @@ impl CompositeKey128 {
     }
 
     #[inline(always)]
-    fn encode_i64_to_float76(n: i64) -> u128 {
+    pub fn encode_i64_to_float76(n: i64) -> u128 {
         if n == 0 {
             return 1u128 << SIGN_BIT_POS; // special zero encoding
         }

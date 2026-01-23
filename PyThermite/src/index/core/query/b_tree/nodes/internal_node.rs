@@ -1,7 +1,7 @@
 use std::ops::Bound;
 use croaring::Bitmap;
 
-use crate::index::core::query::b_tree::{FULL_KEYS, Key, MAX_KEYS, composite_key::CompositeKey128, nodes::leaf_node::LeafNodeIter, ranged_b_tree::{BitMapBTreeNode, Positioning}};
+use crate::index::core::{query::b_tree::{FULL_KEYS, Key, MAX_KEYS, nodes::leaf_node::LeafNodeIter, ranged_b_tree::{BitMapBTreeNode, Positioning}}, structures::composite_key::CompositeKey128};
 
 
 #[derive(Debug, Clone)]
