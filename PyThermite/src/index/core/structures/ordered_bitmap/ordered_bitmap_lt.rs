@@ -60,6 +60,7 @@ macro_rules! define_get_lte_body {
 macro_rules! define_get_lt {
     // with target
     ($name:ident, $feat:literal) => {
+        #[cfg(target_arch = "x86_64")]
         #[target_feature(enable = $feat)]
         unsafe fn $name(&self, value: u128, out: &mut Bitmap, all_valid: &Bitmap) {
             define_get_lt_body!(self, value, out, all_valid);
