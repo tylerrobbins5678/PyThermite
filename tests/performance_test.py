@@ -183,16 +183,6 @@ def test_performance(prep_data_fixture):
     # Print Results
     print("\n==== Benchmark Results ====")
 
-    test = index.collect()[0]
-    test1 = index.collect()[1]
-    test.test_val = test1
-
-    start = time.perf_counter()
-
-    index.group_by("id")
-
-    duration_group = time.perf_counter() - start
-
 #    nested_test = index.reduced_query(
 #        query = Q.eq("test_val.age" ,  test1.age)
 #    ).collect()
