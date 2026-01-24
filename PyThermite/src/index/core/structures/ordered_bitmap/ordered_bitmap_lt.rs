@@ -60,8 +60,7 @@ macro_rules! define_get_lte_body {
 macro_rules! define_get_lt {
     // with target
     ($name:ident, $feat:literal) => {
-        #[cfg(target_arch = "x86_64")]
-        #[target_feature(enable = $feat)]
+        #[cfg_attr(target_arch = "x86_64", target_feature(enable = $feat))]
         unsafe fn $name(&self, value: u128, out: &mut Bitmap, all_valid: &Bitmap) {
             define_get_lt_body!(self, value, out, all_valid);
         }
@@ -79,7 +78,7 @@ macro_rules! define_get_lt {
 macro_rules! define_get_lte {
     // with target
     ($name:ident, $feat:literal) => {
-        #[target_feature(enable = $feat)]
+        #[cfg_attr(target_arch = "x86_64", target_feature(enable = $feat))]
         unsafe fn $name(&self, value: u128, out: &mut Bitmap, all_valid: &Bitmap) {
             define_get_lte_body!(self, value, out, all_valid);
         }
@@ -99,14 +98,17 @@ impl NumericalBitmap {
     #[inline(always)]
     fn get_lt_impl(&self) -> &GetLtFn {
         GET_LT_FN.get_or_init(|| {
-            if std::is_x86_feature_detected!("avx512f") {
-                return Self::get_lt_into_avx512;
-            }
-            if std::is_x86_feature_detected!("avx2") {
-                return Self::get_lt_into_avx2;
-            }
-            if std::is_x86_feature_detected!("sse2") {
-                return Self::get_lt_into_sse2;
+            #[cfg(target_arch = "x86_64")] 
+            {
+                if std::is_x86_feature_detected!("avx512f") {
+                    return Self::get_lt_into_avx512;
+                }
+                if std::is_x86_feature_detected!("avx2") {
+                    return Self::get_lt_into_avx2;
+                }
+                if std::is_x86_feature_detected!("sse2") {
+                    return Self::get_lt_into_sse2;
+                }
             }
             Self::get_lt_into_base
         })
@@ -115,14 +117,17 @@ impl NumericalBitmap {
     #[inline(always)]
     fn get_lte_impl(&self) -> &GetLtFn {
         GET_LTE_FN.get_or_init(|| {
-            if std::is_x86_feature_detected!("avx512f") {
-                return Self::get_lte_into_avx512;
-            }
-            if std::is_x86_feature_detected!("avx2") {
-                return Self::get_lte_into_avx2;
-            }
-            if std::is_x86_feature_detected!("sse2") {
-                return Self::get_lte_into_sse2;
+            #[cfg(target_arch = "x86_64")]
+            {
+                if std::is_x86_feature_detected!("avx512f") {
+                    return Self::get_lte_into_avx512;
+                }
+                if std::is_x86_feature_detected!("avx2") {
+                    return Self::get_lte_into_avx2;
+                }
+                if std::is_x86_feature_detected!("sse2") {
+                    return Self::get_lte_into_sse2;
+                }
             }
             Self::get_lte_into_base
         })
