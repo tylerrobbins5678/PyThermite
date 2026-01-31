@@ -173,48 +173,6 @@ impl QueryMap {
 
 }
 
-pub fn filter_index_by_hashes(
-    index: &Vec<QueryMap>,
-    query: &FxHashMap<SmolStr, HashSet<PyValue>>,
-) -> Bitmap {
-    let mut sets_iter: Bitmap = Bitmap::new();
-    let mut first = true;
-    
-    let mut per_attr_match: Bitmap = Bitmap::new();
-    let mut interner = StrInternerView::new(&INTERNER);
-
-    for (attr, allowed_hashes) in query.iter() {
-        let attr_id = interner.intern(attr) as usize;
-        per_attr_match.clear();
-
-
-        if let None = index.get(attr_id) {
-            return Bitmap::new();
-        } 
-        let attr_map = &index[attr_id];
-        
-        for h in allowed_hashes {
-            if let Some(matched) = attr_map.exact.get(h) {
-                per_attr_match |= matched.as_bitmap();
-            }
-        }
-
-        if !first && sets_iter.is_empty() {
-            return Bitmap::new();
-        }
-
-        if first {
-            sets_iter = per_attr_match.clone();
-        } else {
-            sets_iter &= &per_attr_match;
-        }
-        first = false;
-    }
-
-    sets_iter
-}
-
-
 #[derive(Clone, Debug)]
 pub enum QueryExpr {
     Eq(SmolStr, PyValue),
@@ -505,38 +463,18 @@ pub fn evaluate_and_queries_vec(
     all_valid
 }
 
-pub fn kwargs_to_hash_query<'py>(
-    kwargs: FxHashMap<String, pyo3::Bound<'py, PyAny>>,
-) -> PyResult<FxHashMap<SmolStr, HashSet<PyValue>>> {
-    let mut query = FxHashMap::default();
-
-    for (attr, py_val) in kwargs {
-        let mut hash_set = HashSet::new();
-
-        // Detect if iterable but not string
-        let is_str = py_val.is_instance_of::<PyString>();
-
-        if !is_str {
-            match py_val.try_iter() {
-                Ok(iter) => {
-                    for item in iter {
-                        let lookup_item = PyValue::new(item.unwrap());
-                        hash_set.insert(lookup_item);
-                    }
-                }
-                Err(_) => {
-                    // Not iterable, treat as a single value
-                    hash_set.insert(PyValue::new(py_val));
-                }
+pub fn kwargs_to_query<'py>(
+    kwargs: Option<FxHashMap<String, pyo3::Bound<'py, PyAny>>>,
+) -> FxHashMap<SmolStr, PyValue> {
+    let mut query: FxHashMap<SmolStr, PyValue> = FxHashMap::default();
+    match kwargs {
+        Some(map) => {
+            for (key, val) in map {
+                let py_value = PyValue::new(val);
+                query.insert(key.into(), py_value);
             }
-        } else {
-            // Is a string, treat as a single value
-            hash_set.insert(PyValue::new(py_val));
-        }
-
-        // Single value
-        query.insert(SmolStr::new(attr), hash_set);
+        },
+        None => {}
     }
-
-    Ok(query)
+    query
 }

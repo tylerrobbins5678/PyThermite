@@ -55,6 +55,12 @@ impl BooleanBitmap {
     }
 
     #[inline(always)]
+    pub fn keep_only(&mut self, ids: &Bitmap) {
+        self.true_bitmap.and_inplace(ids);
+        self.false_bitmap.and_inplace(ids);
+    }
+
+    #[inline(always)]
     pub fn remove(&mut self, value: bool, id: u32) {
         if value {
             self.true_bitmap.remove(id);

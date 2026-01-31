@@ -6,8 +6,8 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
-use crate::index::{HybridHashmap, Indexable, PyQueryExpr, core::{query::BulkQueryMapAdder, structures::{hybrid_set::{HybridSet, HybridSetOps}, string_interner::INTERNER}}, interfaces::filtered_index::FilteredIndex, types::{DEFAULT_INDEXABLE_ARC, IndexTree, StrId}};
-use crate::index::core::query::{QueryMap, attr_parts, evaluate_query, filter_index_by_hashes, kwargs_to_hash_query};
+use crate::index::{HybridHashmap, Indexable, PyQueryExpr, core::{query::{BulkQueryMapAdder, query_ops::{QueryExpr, evaluate_and_queries_vec}}, structures::{hybrid_set::{HybridSet, HybridSetOps}, string_interner::INTERNER}}, interfaces::filtered_index::FilteredIndex, types::{DEFAULT_INDEXABLE_ARC, IndexTree, StrId}};
+use crate::index::core::query::{QueryMap, attr_parts, evaluate_query};
 
 use crate::index::core::stored_item::StoredItem;
 use crate::index::value::PyValue;
@@ -194,62 +194,45 @@ impl IndexAPI{
 
     pub fn reduce<'py>(
         &self,
-        self_arc: Weak<Self>,
-        py: Python,
-        kwargs: Option<FxHashMap<String, pyo3::Bound<'py, PyAny>>>,
-    ) -> PyResult<()> {
-        let query = kwargs_to_hash_query(kwargs.unwrap_or_default())?;
-        let mut index = self.get_index_writer();
+        query: FxHashMap<SmolStr, PyValue>,
+    ){
+        // this one is not ideal as it needs to trim in place
+        // ideally this is a bunch of andnot_inplace calls
+        let index = self.get_index_reader();
+        let all_valid = self.get_allowed_items_reader();
+        let exprs: Vec<QueryExpr> = query.into_iter().map(|(k, v)| {
+            QueryExpr::Eq(k, v)
+        }).collect();
+        
+        let keep = evaluate_and_queries_vec(&index, &all_valid, &exprs);
+        let to_remove = all_valid.andnot(&keep);
+        drop(all_valid);
+        
+        let mut allowed_items = self.get_allowed_items_writer();
+        allowed_items.and_inplace(&keep);
+        drop(allowed_items);
 
-        let survivors = filter_index_by_hashes(&index, &query);
-        let survivors = HybridSet::Large(survivors);
-
-        // Step 1: Remove items not in survivors
-        for attr_map in index.iter() {
-            attr_map.remove(&survivors);
+        for map in index.iter() {
+            map.keep_only(&keep);
         }
-
-        // Step 2: Add any missing entries for survivors
-        for idx in survivors.iter() {
-
-            let reader = self.get_items_reader();
-            let item = reader.get(idx as usize).unwrap().clone();
-
-            let py_item = item.borrow_py_ref(py);
-            
-            for (attr_id, val) in (*py_item.get_py_values()).iter() {
-//                if attr.starts_with("_") {
-//                    continue;
-//                }
-                match index.get_mut(*attr_id as usize){
-                    Some(val_map) => {
-                        val_map.insert(&val, idx);
-                    },
-                    None => {
-                        let qmap = QueryMap::new(self_arc.clone());
-                        qmap.insert(&val, idx);
-                        index.insert(*attr_id as usize, qmap);
-                    }
-                }
-            }
+        let mut stored_items = self.get_items_writer();
+        for idx in to_remove.iter(){
+            stored_items[idx as usize] = StoredItem::default();
         }
-
-        // Optional: clean up empty submaps
-//            index.retain(|_, val_map| {
-//                val_map.retain(|_, set| !set.is_empty());
-//                !val_map.is_empty()
-//            });
-        Ok(())
     }
 
 
     pub fn reduced(
         &self,
-        query: std::collections::HashMap<SmolStr, std::collections::HashSet<PyValue>, rustc_hash::FxBuildHasher>
+        query: FxHashMap<SmolStr, PyValue>
     ) -> FilteredIndex {
         let index = self.get_index_reader();
+        let all_valid = self.get_allowed_items_reader();
+        let exprs: Vec<QueryExpr> = query.into_iter().map(|(k, v)| {
+            QueryExpr::Eq(k, v)
+        }).collect();
         self.filter_from_bitmap(
-            filter_index_by_hashes(&index, &query)
+            evaluate_and_queries_vec(&index, &all_valid, &exprs)
         )
     }
 
@@ -262,14 +245,6 @@ impl IndexAPI{
         self.filter_from_bitmap(
             evaluate_query(&index, &allowed, &query.inner)
         )
-    }
-
-    pub fn get_by_attribute(
-        &self,
-        query: std::collections::HashMap<SmolStr, std::collections::HashSet<PyValue>, rustc_hash::FxBuildHasher>
-    ) -> Bitmap {
-        let index = self.get_index_reader();
-        filter_index_by_hashes(&index, &query)
     }
 
     pub fn union_with(&self, other: &IndexAPI) -> PyResult<()>{

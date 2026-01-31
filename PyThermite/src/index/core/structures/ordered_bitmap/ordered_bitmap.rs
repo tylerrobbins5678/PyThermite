@@ -133,6 +133,18 @@ impl NumericalBitmap {
     }
 
     #[inline(always)]
+    pub fn keep_only(&mut self, valid: &Bitmap) {
+        for bit in 0..BIT_LENGTH {
+            for byte_id in 0..2 {
+                let bit_bitmap = self.bits[bit].contains(byte_id);
+                let mut tmp = bit_bitmap.clone();
+                tmp.and_inplace(valid);
+                self.bits[bit].bits[byte_id] = tmp;
+            }
+        }
+    }
+
+    #[inline(always)]
     pub fn flush(&mut self) {
         for bit in 0..BIT_LENGTH {
             self.bits[bit].flush();

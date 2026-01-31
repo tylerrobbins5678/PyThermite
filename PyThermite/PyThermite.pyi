@@ -25,8 +25,8 @@ class Index:
     def reduce(**kwargs): 
         '''
         removes items in place that do not match the given attribute filters
-        Note that this modifies the current index in place and is less performant 
-        than using a method that returns a filteredIndex such as reduced_query or reduced        
+        Note that this modifies the current index in place and is less performant
+        than using a method that returns a filteredIndex such as reduced_query or reduced
         '''
     ...
     def reduced(**kwargs) -> FilteredIndex:

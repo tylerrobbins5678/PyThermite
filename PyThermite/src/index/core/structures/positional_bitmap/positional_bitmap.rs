@@ -21,6 +21,16 @@ impl CharacterMap {
         }
     }
 
+    pub fn keep_only(&mut self, ids: &Bitmap) {
+        self.boundry_bytes.and_inplace(ids);
+        for byte_id in 0..256 {
+            unsafe {
+                let byte_map = self.maps_u8.get_unchecked_mut(byte_id);
+                byte_map.and_inplace(ids);
+            }
+        }
+    }
+
     #[inline(always)]
     pub fn remove(&mut self, byte_id: u8, id: u32) {
         self.boundry_bytes.remove(id);
@@ -92,6 +102,13 @@ impl PositionalBitmap {
         let start = ((self.map.len() / 2) - (bytes.len() / 2)).saturating_sub(1);
         for i in 0..bytes.len() {
             self.map[i + start].remove(bytes[i], id)
+        }
+    }
+
+    #[inline(always)]
+    pub fn keep_only(&mut self, ids: &Bitmap) {
+        for cm in self.map.iter_mut() {
+            cm.keep_only(ids);
         }
     }
 

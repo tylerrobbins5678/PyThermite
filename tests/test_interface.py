@@ -84,8 +84,25 @@ def test_filtered_index(index):
 
     # initial filter
     filtered_index = index.reduced(active=True)
+    assert len(filtered_index.collect()) == 5
     # filter the filtered
     reduced = filtered_index.reduced_query(
+        Q.gt("score", 50.0)
+    )
+
+    result = reduced.collect()
+    assert all(obj.active is True and obj.score > 50.0 for obj in result)
+    assert len(result) == 2
+
+def test_reduce_index(index):
+    objs = [TestClass(num=i, active=(i % 2 == 0), score=float(i) * 10.0) for i in range(10)]
+    index.add_object_many(objs)
+
+    # mutate in place filter
+    index.reduce(active=True)
+    assert len(index.collect()) == 5
+    # filter the filtered
+    reduced = index.reduced_query(
         Q.gt("score", 50.0)
     )
 
