@@ -115,7 +115,7 @@ impl IndexAPI{
                     qmap.insert(value, object_id);
                 } else {
                     drop(delayed_adders);
-                    let qmap = QueryMap::new(weak_self.clone(), *key);
+                    let qmap = QueryMap::new(weak_self.clone());
                     qmap.insert(value, object_id);
                     if attr_id >= writer.len() {
                         writer.resize_with((attr_id + 1) as usize, Default::default); // or None if Option
@@ -226,7 +226,7 @@ impl IndexAPI{
                         val_map.insert(&val, idx);
                     },
                     None => {
-                        let qmap = QueryMap::new(self_arc.clone(), *attr_id);
+                        let qmap = QueryMap::new(self_arc.clone());
                         qmap.insert(&val, idx);
                         index.insert(*attr_id as usize, qmap);
                     }
@@ -347,7 +347,7 @@ impl IndexAPI{
             return;
         }
 
-        let qmap = QueryMap::new(weak_self, attr_id);
+        let qmap = QueryMap::new(weak_self);
         qmap.insert(value, obj_id);
         let mut writer = self.get_index_writer();
 

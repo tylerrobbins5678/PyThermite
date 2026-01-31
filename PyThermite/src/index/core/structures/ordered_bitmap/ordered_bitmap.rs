@@ -22,25 +22,23 @@ impl NumericBitIndex {
     }
 
     #[inline(always)]
-    pub fn add(&mut self, byte_id: usize, id: u32) {
-        self.bits[byte_id].add(id)
+    pub unsafe fn add(&mut self, byte_id: usize, id: u32) {
+        self.bits.get_unchecked_mut(byte_id).add(id)
     }
 
     #[inline(always)]
-    pub fn add_delayed(&mut self, byte_id: usize, id: u32) {
-        let mut len = self.buff_length[byte_id];
+    pub unsafe fn add_delayed(&mut self, byte_id: usize, id: u32) {
+        let mut len = *self.buff_length.get_unchecked(byte_id);
 
         if len == BUFF_SIZE {
             self.flush_byte_id(byte_id, len);
             len = 0;
         }
 
-        unsafe {
-            *self
-                .buffer
-                .get_unchecked_mut(byte_id)
-                .get_unchecked_mut(len) = id;
-        }
+        *self
+            .buffer
+            .get_unchecked_mut(byte_id)
+            .get_unchecked_mut(len) = id;
 
         self.buff_length[byte_id] = len + 1;
     }
@@ -111,14 +109,18 @@ impl NumericalBitmap {
     pub fn add(&mut self, value: u128, id: u32) {
         for bit in 0..BIT_LENGTH {
             let v = (value >> bit) as usize & 1;
-            self.bits[bit].add(v, id);
+            unsafe {
+                self.bits[bit].add(v, id);
+            }
         }
     }
 
     pub fn add_delayed(&mut self, value: u128, id: u32) {
         for bit in 0..BIT_LENGTH {
             let v = (value >> bit) as usize & 1;
-            self.bits[bit].add_delayed(v, id);
+            unsafe{
+                self.bits[bit].add_delayed(v, id);
+            }
         }
     }
 

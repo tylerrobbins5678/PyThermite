@@ -117,7 +117,10 @@ impl QueryMap {
                 self.read_num_ordered().get_exact(bits)
             }
             RustCastValue::Str(extracted_str) => {
-                self.str_radix_map.read().unwrap().get_exact(extracted_str)
+                self.read_str_radix_map().get_exact(extracted_str)
+            }
+            RustCastValue::Bool(b) => {
+                self.get_bool_map_reader().get_exact(*b).clone()
             }
             _ => {
                 if let Some(res) = self.exact.get(val){
@@ -247,9 +250,9 @@ impl QueryExpr {
             QueryExpr::Or(_) => 8,
             QueryExpr::Lt(_, _) => 9,
             QueryExpr::Le(_, _) => 10,
-            QueryExpr::Bt(_, _, _) => 11,
-            QueryExpr::Gt(_, _) => 12,
-            QueryExpr::Ge(_, _) => 13,
+            QueryExpr::Gt(_, _) => 11,
+            QueryExpr::Ge(_, _) => 12,
+            QueryExpr::Bt(_, _, _) => 13,
         }
     }
 }

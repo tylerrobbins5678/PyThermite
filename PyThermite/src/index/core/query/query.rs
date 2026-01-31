@@ -9,7 +9,7 @@ use smol_str::SmolStr;
 
 const QUERY_DEPTH_LEN: usize = 12;
 
-use crate::index::{Index, core::{id_alloc::{allocate_id, free_id}, query::{BulkQueryMapAdder, attr_parts, b_tree::ranged_b_tree::BitMapBTreeIter}, structures::{composite_key::CompositeKey128, hybrid_set::{HybridSet, HybridSetOps}, ordered_bitmap::NumericalBitmap, positional_bitmap::PositionalBitmap, shards::ShardedHashMap}}, types::StrId, value::{PyIterable, PyValue, RustCastValue, StoredIndexable}};
+use crate::index::{Index, core::{id_alloc::{allocate_id, free_id}, query::{BulkQueryMapAdder, attr_parts, b_tree::ranged_b_tree::BitMapBTreeIter}, structures::{boolean_bitmap::BooleanBitmap, composite_key::CompositeKey128, hybrid_set::{HybridSet, HybridSetOps}, ordered_bitmap::NumericalBitmap, positional_bitmap::PositionalBitmap, shards::ShardedHashMap}}, types::StrId, value::{PyIterable, PyValue, RustCastValue, StoredIndexable}};
 use crate::index::core::index::IndexAPI;
 use crate::index::core::stored_item::{StoredItem, StoredItemParent};
 use crate::index::core::query::b_tree::{BitMapBTree, Key};
@@ -18,10 +18,10 @@ use crate::index::core::query::b_tree::{BitMapBTree, Key};
 pub struct QueryMap {
     pub exact: ShardedHashMap<PyValue, HybridSet>,
     pub str_radix_map: RwLock<PositionalBitmap>,
-    pub parent: Weak<IndexAPI>,
     pub num_ordered: RwLock<NumericalBitmap>,
+    pub bool_map: RwLock<BooleanBitmap>,
+    pub parent: Weak<IndexAPI>,
     pub nested: Arc<IndexAPI>,
-    pub attr_stored: StrId,
     pub mapped_ids: RwLock<FxHashMap<u32, u32>>,
     pub masked_ids: RwLock<Bitmap>,
     stored_items: Arc<RwLock<Vec<StoredItem>>>,
@@ -31,7 +31,7 @@ unsafe impl Send for QueryMap {}
 unsafe impl Sync for QueryMap {}
 
 impl QueryMap {
-    pub fn new(parent: Weak<IndexAPI>, attr_id: StrId) -> Self {
+    pub fn new(parent: Weak<IndexAPI>) -> Self {
         let stored_items = if let Some(p) = parent.upgrade() {
             p.items.clone()
         } else {
@@ -40,11 +40,11 @@ impl QueryMap {
         Self{
             exact: ShardedHashMap::<PyValue, HybridSet>::with_shard_count(16),
             str_radix_map: RwLock::new(PositionalBitmap::new()),
-            attr_stored: attr_id,
             parent: parent.clone(),
             num_ordered: RwLock::new(NumericalBitmap::new()),
+            bool_map: RwLock::new(BooleanBitmap::new()),
             nested: Arc::new(IndexAPI::new(Some(parent))),
-            mapped_ids: FxHashMap::default().into(),
+            mapped_ids: RwLock::new(FxHashMap::default()),
             masked_ids: RwLock::new(Bitmap::new()),
             stored_items
         }
@@ -64,8 +64,28 @@ impl QueryMap {
     }
 
     #[inline]
+    fn insert_bool(&self, value: bool, obj_id: u32) {
+        self.insert_bool_from_guard(&mut self.get_bool_map_writer(), value, obj_id);
+    }
+
+    #[inline]
+    pub(crate) fn insert_bool_from_guard(&self, guard: &mut RwLockWriteGuard<'_, BooleanBitmap>, value: bool, obj_id: u32) {
+        guard.add(value, obj_id);
+    }
+
+    #[inline]
+    pub(crate) fn insert_bool_delayed_from_guard(&self, guard: &mut RwLockWriteGuard<'_, BooleanBitmap>, value: bool, obj_id: u32) {
+        guard.add_delayed(value, obj_id);
+    }
+
+    #[inline]
     fn insert_str(&self, value: &str, obj_id: u32) {
-        self.write_str_radix_map().add(value, obj_id);
+        self.insert_str_from_guard(&mut self.write_str_radix_map(), value, obj_id);
+    }
+
+    #[inline]
+    pub(crate) fn insert_str_from_guard(&self, guard: &mut RwLockWriteGuard<'_, PositionalBitmap>, value: &str, obj_id: u32) {
+        guard.add(value, obj_id);
     }
 
     #[inline]
@@ -73,16 +93,33 @@ impl QueryMap {
         self.write_str_radix_map().remove(value, obj_id);
     }
 
+    #[inline]
     fn insert_num_ordered(&self, key: Key, obj_id: u32){
-        let composit_key = CompositeKey128::new(key, obj_id);
-        let mut writer = self.write_num_ordered();
-        writer.add(composit_key.get_value_bits(), obj_id);
+        self.insert_num_ordered_from_guard(&mut self.write_num_ordered(), key, obj_id);
     }
 
+    #[inline]
+    pub(crate) fn insert_num_ordered_from_guard(&self, guard: &mut RwLockWriteGuard<'_, NumericalBitmap>, key: Key, obj_id: u32){
+        let composit_key = CompositeKey128::new(key, obj_id);
+        guard.add(composit_key.get_value_bits(), obj_id);
+    }
+
+    #[inline]
+    pub(crate) fn insert_delayed_num_ordered_from_guard(&self, guard: &mut RwLockWriteGuard<'_, NumericalBitmap>, key: Key, obj_id: u32){
+        let composit_key = CompositeKey128::new(key, obj_id);
+        guard.add_delayed(composit_key.get_value_bits(), obj_id);
+    }
+
+    #[inline]
     fn remove_num_ordered(&self, key: Key, obj_id: u32){
         let composit_key = CompositeKey128::new(key, obj_id);
         let mut writer = self.write_num_ordered();
         writer.remove(composit_key.get_value_bits(), obj_id);
+    }
+
+    #[inline]
+    fn remove_bool(&self, value: bool, obj_id: u32) {
+        self.get_bool_map_writer().remove(value, obj_id);
     }
 
     pub(crate) fn insert_indexable(&self, index_obj: &StoredIndexable, obj_id: u32){
@@ -119,7 +156,7 @@ impl QueryMap {
         }
     }
 
-    fn insert_iterable(&self, iterable: &PyIterable, obj_id: u32){
+    pub(crate) fn insert_iterable(&self, iterable: &PyIterable, obj_id: u32){
         Python::with_gil(|py| {
             match iterable {
                 PyIterable::Dict(_) => {
@@ -176,7 +213,7 @@ impl QueryMap {
             RustCastValue::Iterable(py_iterable) => {
                 self.insert_iterable(py_iterable, obj_id);
             }
-            RustCastValue::Bool(_) => self.insert_exact(value, obj_id),
+            RustCastValue::Bool(b) => self.insert_bool(*b, obj_id),
             RustCastValue::Str(extracted_str) => {
                 self.insert_str(extracted_str, obj_id);
                 // self.insert_exact(value, obj_id);
@@ -206,6 +243,7 @@ impl QueryMap {
         });
         self.write_str_radix_map().merge(&other.read_str_radix_map());
         self.write_num_ordered().merge(&other.read_num_ordered());
+        self.get_bool_map_writer().merge(&other.get_bool_map_reader());
         self.get_masked_ids_writer().or_inplace(&other.get_masked_ids_reader());
         self.get_mapped_ids_writer().extend(other.get_mapped_ids_reader().iter());
     }
@@ -301,7 +339,7 @@ impl QueryMap {
                 self.remove_str(extracted_str, idx);
                 // self.remove_exact(py_value, idx);
             },
-            RustCastValue::Bool(_) => self.remove_exact(py_value, idx),
+            RustCastValue::Bool(b) => self.remove_bool(*b, idx),
             RustCastValue::Ind(indexable) => {
                 self.remove_exact(py_value, idx);
                 self.nested.remove(&indexable.owned_handle, idx);
@@ -381,10 +419,16 @@ impl QueryMap {
     pub fn get_masked_ids_writer(&self) -> std::sync::RwLockWriteGuard<'_, Bitmap> {
         self.masked_ids.write().unwrap()
     }
+    pub fn get_bool_map_reader(&self) -> RwLockReadGuard<'_, BooleanBitmap> {
+        self.bool_map.read().unwrap()
+    }
+    pub fn get_bool_map_writer(&self) -> RwLockWriteGuard<'_, BooleanBitmap> {
+        self.bool_map.write().unwrap()
+    }
 }
 
 impl QueryMap {
-    pub fn get_bulk_writer(&self) -> BulkQueryMapAdder {
+    pub fn get_bulk_writer<'a>(&'a self) -> BulkQueryMapAdder<'a> {
         BulkQueryMapAdder::new(self)
     }
 }
