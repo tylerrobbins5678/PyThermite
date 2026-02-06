@@ -276,7 +276,9 @@ mod tests {
         let res = m.get_for_forward_many(&forwards);
 
         assert!(res.contains(100));
-        assert_eq!(res.cardinality(), 1);
+        assert!(res.contains(200));
+        assert!(res.contains(300));
+        assert_eq!(res.cardinality(), 3);
     }
 
     #[test]
@@ -296,7 +298,9 @@ mod tests {
         let res = m.get_for_reverse_many(&reverses);
 
         assert!(res.contains(100));
-        assert_eq!(res.cardinality(), 1);
+        assert!(res.contains(200));
+        assert!(res.contains(300));
+        assert_eq!(res.cardinality(), 3);
     }
 
     #[test]
