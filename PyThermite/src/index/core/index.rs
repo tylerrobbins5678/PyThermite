@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
-use crate::index::{HybridHashmap, Indexable, PyQueryExpr, core::{query::{BulkQueryMapAdder, query_ops::{QueryExpr, evaluate_and_queries_vec}}, structures::{hybrid_set::{HybridSet, HybridSetOps}, string_interner::INTERNER}}, interfaces::filtered_index::FilteredIndex, types::{DEFAULT_INDEXABLE_ARC, IndexTree, StrId}};
+use crate::index::{HybridHashmap, Indexable, PyQueryExpr, core::{query::{BulkQueryMapAdder, query_ops::{QueryExpr, evaluate_and_queries_vec}}, structures::{hybrid_set::{HybridSet, HybridSetOps}, m2m::M2MU32, string_interner::INTERNER}}, interfaces::filtered_index::FilteredIndex, types::{DEFAULT_INDEXABLE_ARC, IndexTree, StrId}};
 use crate::index::core::query::{QueryMap, attr_parts, evaluate_query};
 
 use crate::index::core::stored_item::StoredItem;
@@ -19,6 +19,7 @@ pub struct IndexAPI{
     pub index: IndexTree,
     pub items: Arc<RwLock<Vec<StoredItem>>>,
     pub allowed_items: Arc<RwLock<Bitmap>>,
+    pub parent_child_map: Arc<RwLock<M2MU32>>,
     pub parent_index: Option<Weak<IndexAPI>>,
 }
 
@@ -29,6 +30,7 @@ impl IndexAPI{
             index: Arc::new(RwLock::new(vec![])),
             items: Arc::new(RwLock::new(vec![])),
             allowed_items: Arc::new(RwLock::new(Bitmap::new())),
+            parent_child_map: Arc::new(RwLock::new(M2MU32::new())),
             parent_index: parent_index,
         }
     }
@@ -44,30 +46,13 @@ impl IndexAPI{
         Ok(result)
     }
 
-    pub fn get_direct_parents(&self, to_get: &Bitmap) -> HybridSet {
-        let items_reader = self.get_items_reader();
-        let mut result = HybridSet::new();
-
-        for idx in to_get.iter(){
-            result.or_inplace(items_reader[idx as usize].get_parent_ids());
-        }
-
-        result
+    pub fn get_from_parent_ids(&self, parent_ids: &Bitmap) -> Bitmap {
+        self.get_parent_child_map_reader().get_for_forward_many(parent_ids)
     }
 
-    pub fn get_ids_to_root(&self, idx: u32) -> HybridSet {
-        let mut res = HybridSet::new();
-        if let Some(weak_parent) = &self.parent_index {
-            if let Some(parent) = weak_parent.upgrade(){
-                res.or_inplace(&parent.get_parents_from_stored_item(idx as usize));
-            }
-        }
+    pub fn get_parent_from_ids(&self, ids: &Bitmap) -> Bitmap {
+        let res = self.get_parent_child_map_reader().get_for_reverse_many(ids);
         res
-    }
-
-    pub fn get_parents_from_stored_item(&self, idx: usize) -> HybridSet {
-        let guard = self.get_items_reader();
-        guard[idx].get_path_to_root()
     }
 
     pub fn add_object_many(
@@ -90,7 +75,7 @@ impl IndexAPI{
             allowed_writer.add(rust_handle.id);
 
             let idx = rust_handle.id as usize;
-            let stored_item = StoredItem::new(py_handle.clone(), rust_handle.clone(),None);
+            let stored_item = StoredItem::new(py_handle.clone(), rust_handle.clone());
 
             if items_writer.len() <= idx{
                 items_writer.resize(idx * 2, StoredItem::default());
@@ -144,9 +129,14 @@ impl IndexAPI{
     }
 
     pub fn register_path(&self, object_id: u32, parent_id: u32) {
-        let mut writer = self.get_items_writer();
-        let obj = writer.get_mut(object_id as usize).unwrap();
-        obj.add_parent(parent_id);
+        self.get_parent_child_map_writer().add(object_id, parent_id);
+//        let mut writer = self.get_items_writer();
+//        let obj = writer.get_mut(object_id as usize).unwrap();
+//        obj.add_parent(parent_id);
+    }
+
+    pub fn deregister_path(&self, object_id: u32, parent_id: u32) {
+        self.get_parent_child_map_writer().remove(parent_id, object_id);
     }
 
     pub fn add_object(
@@ -173,26 +163,46 @@ impl IndexAPI{
         }
     }
 
-    pub fn remove(&self, item: &Indexable, parent_id: u32) {
-        let item_id = item.id;
-        let mut writer = self.get_items_writer();
-        if let Some(stored_item) = writer.get_mut(item_id as usize){
-            stored_item.remove_parent(parent_id);
-            if stored_item.is_orphaned() {
-                writer[item_id as usize] = StoredItem::default();
-                drop(writer);
-
-                for (key, value) in (*item.get_py_values()).iter(){
-                    // if key.starts_with("_"){continue;}
-                    self.remove_index(item_id, *key as usize, value);
-                }
-
-                self.get_allowed_items_writer().remove(item_id);
+    pub fn get_parents_from_id(&self, id: usize) -> Bitmap {
+        let mut res = self.get_parent_child_map_reader().get_for_reverse(id as u32);
+        if let Some(p_index) = &self.parent_index {
+            if let Some(p_index) = p_index.upgrade() {
+                let parent_parents = p_index.get_parent_from_ids(&res);
+                res.or_inplace(&parent_parents);
             }
         }
+        res
     }
 
-    pub fn reduce<'py>(
+    pub fn remove(&self, item: &Indexable, parent_id: u32) {
+        let item_id = item.id;
+        let mut parent_child_map_writer = self.get_parent_child_map_writer();
+        
+        if parent_child_map_writer.get_for_reverse(parent_id).cardinality() == 1 {
+            parent_child_map_writer.remove(parent_id, item_id);
+            let mut items_writer = self.get_items_writer();
+            items_writer[item_id as usize] = StoredItem::default();
+            drop(items_writer);
+
+            for (key, value) in (*item.get_py_values()).iter(){
+                // if key.starts_with("_"){continue;}
+                self.remove_index(item_id, *key as usize, value);
+            }
+
+            self.get_allowed_items_writer().remove(item_id);
+        }
+    }
+    
+
+    pub fn keep_only_with_parent_ids(&self, parent_ids: &Bitmap) {
+        let to_keep = self.get_from_parent_ids(parent_ids);
+        for id in parent_ids.iter() {
+            eprintln!("{:p} Keeping children of parent id {}", self, id);
+        }
+        self.keep_only_from_bitmap(&to_keep);
+    }
+
+    pub fn reduce(
         &self,
         query: FxHashMap<SmolStr, PyValue>,
     ){
@@ -205,8 +215,13 @@ impl IndexAPI{
         }).collect();
         
         let keep = evaluate_and_queries_vec(&index, &all_valid, &exprs);
-        let to_remove = all_valid.andnot(&keep);
         drop(all_valid);
+        self.keep_only_from_bitmap(&keep);
+    }
+
+    fn keep_only_from_bitmap(&self, keep: &Bitmap) {
+        let index = self.get_index_reader();
+        let to_remove = self.get_allowed_items_reader().andnot(&keep);
         
         let mut allowed_items = self.get_allowed_items_writer();
         allowed_items.and_inplace(&keep);
@@ -397,6 +412,16 @@ impl IndexAPI{
     fn get_allowed_items_reader(&self) -> RwLockReadGuard<'_, Bitmap> {
         self.allowed_items.read().unwrap()
         //self.allowed_items.try_read().expect("cannot read from index")
+    }
+
+    fn get_parent_child_map_reader(&self) -> RwLockReadGuard<'_, M2MU32> {
+        self.parent_child_map.read().unwrap()
+        //self.parent_child_map.try_read().expect("cannot read from index")
+    }
+
+    fn get_parent_child_map_writer(&self) -> RwLockWriteGuard<'_, M2MU32> {
+        self.parent_child_map.write().unwrap()
+        //self.parent_child_map.try_write().expect("cannot read from index")
     }
 }
 

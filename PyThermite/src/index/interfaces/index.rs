@@ -92,7 +92,7 @@ impl Index {
         py.allow_threads(move ||{
             let weak_index = Arc::downgrade(&self.inner);
             rust_handle.add_index(weak_index.clone());
-            let stored_item = StoredItem::new(py_handle, rust_handle.clone(), None);
+            let stored_item = StoredItem::new(py_handle, rust_handle.clone());
             // i dont like this clone - need to remove
             let py_val_hashmap = rust_handle.get_py_values();
             self.inner.add_object(weak_index, rust_handle.id, stored_item, py_val_hashmap);

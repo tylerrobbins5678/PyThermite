@@ -186,7 +186,8 @@ impl Indexable {
     }
 
     pub fn get_py_values(&self) -> MutexGuard<'_, HybridHashmap<StrId, PyValue>>{
-        self.py_values.lock().unwrap()
+        // self.py_values.try_lock().expect("cannot read from indexable")
+        self.py_values.lock().expect("cannot read from indexable")
     }
 
     pub fn with_attr_id<F, R>(&self, str_id: StrId, f: F) -> Option<R>

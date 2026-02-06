@@ -5,7 +5,7 @@ use pyo3::{pyclass, pymethods, Py, PyAny, PyResult, Python};
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 
-use crate::index::{Index, Indexable, PyQueryExpr, core::query::query_ops::{QueryExpr, evaluate_and_queries_vec}, types::IndexTree, value::PyValue};
+use crate::index::{Index, Indexable, PyQueryExpr, core::{query::query_ops::{QueryExpr, evaluate_and_queries_vec}, structures::m2m::M2MU32}, types::IndexTree, value::PyValue};
 use crate::index::core::stored_item::StoredItem;
 use crate::index::core::index::IndexAPI;
 use crate::index::core::query::{evaluate_query, QueryMap};
@@ -76,6 +76,7 @@ impl FilteredIndex{
             index: Arc::new(RwLock::new(vec![])),
             items: Arc::new(RwLock::new(Vec::with_capacity(max_size as usize))),
             allowed_items: Arc::new(RwLock::new(self.allowed_items.clone())),
+            parent_child_map: Arc::new(RwLock::new(M2MU32::new())),
             parent_index: None,
         };
         

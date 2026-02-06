@@ -12,14 +12,14 @@ impl QueryMap {
         self.write_str_radix_map().keep_only(keep);
         self.write_num_ordered().keep_only(keep);
         self.get_bool_map_writer().keep_only(keep);
+        self.nested.keep_only_with_parent_ids(keep);
 
         let mut writer = self.get_masked_ids_writer();
-        let to_be_removed = keep.andnot(&writer);
+        let to_be_removed = writer.andnot(&keep);
         writer.and_inplace(keep);
         let mut mapped_ids = self.get_mapped_ids_writer();
         for r in to_be_removed.iter() {
             mapped_ids.remove(&r);
         }
     }
-
 }

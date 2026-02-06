@@ -4,76 +4,22 @@ use std::{hash::{Hash, Hasher}, sync::{Arc, Weak}};
 use crate::index::{core::{index::IndexAPI, structures::hybrid_set::{HybridSet, HybridSetOps}}, types::{DEFAULT_INDEXABLE_ARC, DEFAULT_PY_INDEXABLE_ARC, StrId}, value::PyValue};
 use crate::index::Indexable;
 
-#[derive(Clone, Debug)]
-pub struct StoredItemParent {
-    pub ids: HybridSet,
-    pub path_to_root: HybridSet,
-    pub index: Weak<IndexAPI>,
-}
 
 #[derive(Clone, Debug)]
 pub struct StoredItem{
     // these two are the same object, one is a rust handle and the other is a python handle
     py_item: Arc<Py<Indexable>>,
     owned_py_item: Arc<Indexable>,
-    parent: Option<StoredItemParent>, // parent index id
 }
 
 impl<'py> StoredItem {
     pub fn new(
         py_handle: Arc<Py<Indexable>>,
         rust_handle: Arc<Indexable>,
-        parent: Option<StoredItemParent>
     ) -> Self {
         Self {
             py_item: py_handle,
             owned_py_item: rust_handle,
-            parent: parent,
-        }
-    }
-
-    pub fn is_orphaned(&self) -> bool {
-        if let Some(ref p) = self.parent {
-            p.ids.cardinality() == 0
-        } else {
-            false
-        }
-    }
-
-    pub fn remove_parent(&mut self, parent_id: u32) {
-        if let Some(ref mut p) = self.parent {
-            p.ids.remove(parent_id)
-        }
-    }
-
-    pub fn add_parent(&mut self, parent_id: u32) {
-        if let Some(ref mut p) = self.parent {
-            p.ids.add(parent_id)
-        }
-    }
-
-    pub fn get_parent_ids(&self) -> &HybridSet {
-        if let Some(parent) = &self.parent {
-            &parent.ids
-        } else {
-            &HybridSet::Empty
-        }
-    }
-
-    pub fn get_path_to_root(&self) -> HybridSet {
-        let mut res = HybridSet::new();
-        if let Some(parent) = &self.parent {
-            if let Some(index) = parent.index.upgrade() {
-                for id in parent.ids.iter() {
-                    res.or_inplace(&index.get_ids_to_root(id));
-                    res.add(id);
-                }
-                res
-            } else {
-                panic!("bad index upgrade");
-            }
-        } else {
-            res
         }
     }
 
@@ -102,7 +48,6 @@ impl Default for StoredItem {
         Self {
             py_item: DEFAULT_PY_INDEXABLE_ARC.clone(),
             owned_py_item: DEFAULT_INDEXABLE_ARC.clone(),
-            parent: None,
         }
     }
 }

@@ -231,7 +231,7 @@ pub fn evaluate_nested_query(
 ) -> Bitmap {
     let wrapper = PyQueryExpr{inner: expr.clone()};
     let reduced = nested_map.nested.reduced_query(wrapper);
-    nested_map.get_allowed_parents(&reduced.allowed_items).as_bitmap()
+    nested_map.get_allowed_parents(&reduced.allowed_items)
 }
 
 pub fn evaluate_query(

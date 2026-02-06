@@ -11,7 +11,7 @@ const QUERY_DEPTH_LEN: usize = 12;
 
 use crate::index::{Index, core::{id_alloc::{allocate_id, free_id}, query::{BulkQueryMapAdder, attr_parts, b_tree::ranged_b_tree::BitMapBTreeIter}, structures::{boolean_bitmap::BooleanBitmap, composite_key::CompositeKey128, hybrid_set::{HybridSet, HybridSetOps}, ordered_bitmap::NumericalBitmap, positional_bitmap::PositionalBitmap, shards::ShardedHashMap}}, types::StrId, value::{PyIterable, PyValue, RustCastValue, StoredIndexable}};
 use crate::index::core::index::IndexAPI;
-use crate::index::core::stored_item::{StoredItem, StoredItemParent};
+use crate::index::core::stored_item::StoredItem;
 use crate::index::core::query::b_tree::{BitMapBTree, Key};
 
 #[derive(Default)]
@@ -123,16 +123,14 @@ impl QueryMap {
     }
 
     pub(crate) fn insert_indexable(&self, index_obj: &StoredIndexable, obj_id: u32){
-        let mut path = HybridSet::new();
-
-        if let Some(parent) = self.parent.upgrade() {
-            path = parent.get_parents_from_stored_item(obj_id as usize);
-        }
-
         let id: u32 = index_obj.owned_handle.id;
 
-        if path.contains(id){
-            return;
+        if let Some(parent) = self.parent.upgrade() {
+            let path = parent.get_parents_from_id(obj_id as usize);
+    
+            if path.contains(id){
+                return;
+            }
         }
 
         // register the index in the object
@@ -140,17 +138,10 @@ impl QueryMap {
         index_obj.owned_handle.add_index(weak_nested.clone());
 
         if self.nested.has_object_id(id) {
-            self.nested.register_path(id, obj_id);
+            self.nested.register_path(obj_id, id);
         } else {
-            let mut hs = HybridSet::new();
-            hs.add(obj_id);
-            let stored_parent = StoredItemParent {
-                ids: hs,
-                path_to_root: path,
-                index: weak_nested.clone(),
-            };
-
-            let stored_item = StoredItem::new(index_obj.python_handle.clone(), index_obj.owned_handle.clone(), Some(stored_parent));
+            self.nested.register_path(obj_id, id);
+            let stored_item = StoredItem::new(index_obj.python_handle.clone(), index_obj.owned_handle.clone());
             let py_values = index_obj.owned_handle.get_py_values();
             self.nested.add_object(weak_nested, id, stored_item, py_values);
         }
@@ -384,8 +375,8 @@ impl QueryMap {
         None
     }
 
-    pub fn get_allowed_parents(&self, child_bm: &Bitmap) -> HybridSet {
-        self.nested.get_direct_parents(child_bm)
+    pub fn get_allowed_parents(&self, child_bm: &Bitmap) -> Bitmap {
+        self.nested.get_parent_from_ids(child_bm)
     }
 
     pub fn get_stored_items(&self) -> &Arc<RwLock<Vec<StoredItem>>> {

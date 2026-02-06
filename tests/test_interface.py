@@ -131,7 +131,8 @@ def test_nested_object_query(index):
     class NestedTestClass(Indexable):
         pass
 
-    nested_objs = [TestClass(num=i, nested=NestedTestClass(num=i * 10)) for i in range(5)]
+    n = [NestedTestClass(num=i * 10) for i in range(5)]
+    nested_objs = [TestClass(num=i, nested=n[i]) for i in range(5)]
     index.add_object_many(nested_objs)
 
     # Query based on nested object's attribute
