@@ -97,7 +97,10 @@ impl PyValue {
             RustCastValue::Unknown
         };
 
-        let hash = Self::hash_primitave(&primitave);
+        let hash = match &primitave {
+            RustCastValue::Unknown => obj.hash().unwrap() as u64,
+            _ => Self::hash_primitave(&primitave)
+        };
 
         Self {
             obj: Some(Arc::new(obj.into())),
@@ -191,7 +194,13 @@ impl PartialEq for PyValue {
             (RustCastValue::Iterable(a), RustCastValue::Iterable(b)) => {
                 std::ptr::eq(a as *const _, b as *const _)
             },
-            _ => false,
+            (RustCastValue::Unknown, RustCastValue::Unknown) => {
+                std::ptr::eq(
+                    self.obj.as_ref().unwrap().as_ptr(),
+                    other.obj.as_ref().unwrap().as_ptr()
+                )
+            },
+            _ => false
         }
     }
 }

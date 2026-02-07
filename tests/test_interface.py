@@ -60,6 +60,21 @@ def test_query(index):
     assert all(obj.active is True and obj.score > 50.0 for obj in result)
     assert len(result) == 2  # Should be objects with num 6 and 8
 
+def test_query_raw_object(index):
+
+    class SomeClass:
+        pass
+
+    objs = [TestClass(num=i, active=(i % 2 == 0), score=float(i) * 10.0) for i in range(10)]
+    index.add_object_many(objs)
+    some_instance = SomeClass()
+    objs[4].some_class = some_instance
+
+    result = index.reduced_query(Q.eq('some_class', some_instance)).collect()
+    assert len(result) == 1
+    assert result[0].some_class is some_instance
+    assert result[0].num == 4
+
 def test_query_chain(index):
     objs = [TestClass(num=i, active=(i % 2 == 0), score=float(i) * 10.0) for i in range(10)]
     index.add_object_many(objs)

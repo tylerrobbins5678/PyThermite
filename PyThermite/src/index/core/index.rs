@@ -196,9 +196,6 @@ impl IndexAPI{
 
     pub fn keep_only_with_parent_ids(&self, parent_ids: &Bitmap) {
         let to_keep = self.get_from_parent_ids(parent_ids);
-        for id in parent_ids.iter() {
-            eprintln!("{:p} Keeping children of parent id {}", self, id);
-        }
         self.keep_only_from_bitmap(&to_keep);
     }
 

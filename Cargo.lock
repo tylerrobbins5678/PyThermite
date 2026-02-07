@@ -289,7 +289,7 @@ dependencies = [
 
 [[package]]
 name = "pythermite"
-version = "0.5.0-alpha.2"
+version = "0.5.0-alpha.3"
 dependencies = [
  "arc-swap",
  "bumpalo",
