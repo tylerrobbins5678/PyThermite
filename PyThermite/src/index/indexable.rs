@@ -4,10 +4,8 @@ use pyo3::types::PyStringMethods;
 use pyo3::{ffi, IntoPyObjectExt, PyErr, PyRef};
 
 use smallvec::SmallVec;
-use once_cell::sync::Lazy;
 
 use std::fmt;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::MutexGuard;
 use std::sync::{Arc, Mutex, Weak};
 use std::hash::{Hash, Hasher};
@@ -50,7 +48,7 @@ impl Indexable{
         let mut interner = StrInternerView::new(&INTERNER);
 
         if let Some(dict) = kwargs {
-            py_values = HybridHashmap::Small(SmallVec::new());
+            py_values = HybridHashmap::new();
             for (key, value) in dict.iter() {
                 if let Ok(key_str) = key.extract::<&str>() {
                     let key_id: StrId = interner.intern(key_str);
@@ -58,7 +56,7 @@ impl Indexable{
                 }
             }
         } else {
-            py_values = HybridHashmap::Small(SmallVec::new());
+            py_values = HybridHashmap::new();
         }
 
         Self {
@@ -73,9 +71,9 @@ impl Indexable{
 
         let val: PyValue = PyValue::new(value);
 
-        py.allow_threads(||{
-            let mut interner = StrInternerView::new(&INTERNER);
-            for ind in self.meta.lock().unwrap().iter() {
+        let mut interner = StrInternerView::new(&INTERNER);
+        for ind in self.meta.lock().unwrap().iter() {
+            py.allow_threads(||{
                 if let Some(full_index) = ind.index.upgrade() {
                     let name_id = interner.intern(name);
                     if let Some(old_val) = self.get_py_values().get(&name_id){
@@ -84,11 +82,11 @@ impl Indexable{
                         full_index.update_index(ind.index.clone(), name_id, None, &val, self.id);
                     }
                 }
-            }
-        });
+            });
+        }
 
         // update value
-        let str_id: StrId = INTERNER.intern(name);
+        let str_id: StrId = interner.intern(name);
         self.py_values.lock().unwrap().insert(str_id, val);
         Ok(())
     }
@@ -233,7 +231,7 @@ impl Default for Indexable {
         Self {
             meta: Arc::new(Mutex::new(SmallVec::new())),
             id: allocate_id(),
-            py_values: Arc::new(Mutex::new(HybridHashmap::Small(SmallVec::new()))),
+            py_values: Arc::new(Mutex::new(HybridHashmap::new())),
             recycle_id_on_drop: true
         }
     }
