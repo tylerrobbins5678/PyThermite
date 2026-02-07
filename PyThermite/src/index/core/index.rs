@@ -87,8 +87,8 @@ impl IndexAPI{
         drop(allowed_writer);
         drop(items_writer);
 
-        let mut writer = self.get_index_writer();
-        let mut delayed_adders: Vec<BulkQueryMapAdder> = writer.iter().map(|i| {
+        let mut index_reader = self.get_index_reader();
+        let mut delayed_adders: Vec<BulkQueryMapAdder> = index_reader.iter().map(|i| {
             i.get_bulk_writer()
         }).collect();
 
@@ -100,14 +100,19 @@ impl IndexAPI{
                     qmap.insert(value, object_id);
                 } else {
                     drop(delayed_adders);
+                    drop(index_reader);
+
+                    let mut writer = self.get_index_writer();
                     let qmap = QueryMap::new(weak_self.clone());
                     qmap.insert(value, object_id);
                     if attr_id >= writer.len() {
                         writer.resize_with((attr_id + 1) as usize, Default::default); // or None if Option
                     }
                     writer[attr_id as usize] = qmap;
-
-                    delayed_adders = writer.iter().map(|i| {
+                    
+                    drop(writer);
+                    index_reader = self.get_index_reader();
+                    delayed_adders = index_reader.iter().map(|i| {
                         i.get_bulk_writer()
                     }).collect();
                 }
