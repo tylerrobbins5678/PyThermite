@@ -1,8 +1,6 @@
 use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
 use std::{borrow::Borrow, hash::Hash, mem::MaybeUninit, ptr};
 
-use crate::index::value;
 const SMALL_SIZE: usize = 8;
 
 #[derive(Debug)]
@@ -79,6 +77,7 @@ impl<K, V> Drop for SmallKVMap<K, V> {
         let len = self.len as usize;
         for i in 0..len {
             unsafe {
+                self.keys[i].assume_init_drop();
                 self.values[i].assume_init_drop();
             }
         }

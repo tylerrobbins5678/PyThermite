@@ -2,6 +2,8 @@ use std::{cell::RefCell, sync::OnceLock};
 
 use croaring::Bitmap;
 
+use crate::index::core::structures::buffered_bitmap::BufferedBitmap;
+
 pub(crate) const BIT_LENGTH: usize = 76; // do not use the whole 128
 const BUFF_SIZE: usize = 128;
 
@@ -11,9 +13,7 @@ thread_local! {
 
 #[derive(Debug, Clone)]
 pub(crate) struct NumericBitIndex {
-    bits: [Bitmap; 2],
-    buffer: [[u32; BUFF_SIZE]; 2],
-    buff_length: [usize; 2]
+    bits: [BufferedBitmap<BUFF_SIZE>; 2],
 }
 
 impl NumericBitIndex {
@@ -28,33 +28,13 @@ impl NumericBitIndex {
 
     #[inline(always)]
     pub unsafe fn add_delayed(&mut self, byte_id: usize, id: u32) {
-        let mut len = *self.buff_length.get_unchecked(byte_id);
-
-        if len == BUFF_SIZE {
-            self.flush_byte_id(byte_id, len);
-            len = 0;
-        }
-
-        *self
-            .buffer
-            .get_unchecked_mut(byte_id)
-            .get_unchecked_mut(len) = id;
-
-        self.buff_length[byte_id] = len + 1;
-    }
-
-    #[inline(always)]
-    pub fn flush_byte_id(&mut self, byte_id: usize, len: usize){
-        self.bits[byte_id].add_many(
-            &self.buffer[byte_id][0..len]
-        );
-        self.buff_length[byte_id] = 0;
+        self.bits.get_unchecked_mut(byte_id).add_delayed(id)
     }
 
     #[inline(always)]
     pub fn flush(&mut self) {
         for byte_id in 0..2 {
-            self.flush_byte_id(byte_id, self.buff_length[byte_id]);
+            unsafe { self.bits.get_unchecked_mut(byte_id).flush(); }
         }
     }
 
@@ -88,9 +68,7 @@ impl NumericBitIndex {
 impl Default for NumericBitIndex {
     fn default() -> Self {
         Self { 
-            bits: std::array::from_fn( |_| Bitmap::new()),
-            buffer: [[0u32; BUFF_SIZE]; 2],
-            buff_length: [0; 2]
+            bits: std::array::from_fn( |_| BufferedBitmap::new())
         }
     }
 }
@@ -136,8 +114,8 @@ impl NumericalBitmap {
     pub fn keep_only(&mut self, valid: &Bitmap) {
         for bit in 0..BIT_LENGTH {
             for byte_id in 0..2 {
-                let bit_bitmap = self.bits[bit].contains(byte_id);
-                let mut tmp = bit_bitmap.clone();
+                let mut tmp = BufferedBitmap::new();
+                tmp.or_inplace(self.bits[bit].contains(byte_id));
                 tmp.and_inplace(valid);
                 self.bits[bit].bits[byte_id] = tmp;
             }

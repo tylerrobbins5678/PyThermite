@@ -7,3 +7,4 @@ pub mod ordered_bitmap;
 pub mod composite_key;
 pub mod boolean_bitmap;
 pub mod m2m;
+pub mod buffered_bitmap;

@@ -56,12 +56,13 @@ impl<'a> BulkQueryMapAdder<'a> {
 
     #[inline]
     fn insert_num_ordered(&mut self, key: Key, obj_id: u32){
-        self.map.insert_delayed_num_ordered_from_guard(&mut self.num_ordered, key, obj_id);
+        let composit_key = CompositeKey128::new(key, obj_id);
+        self.num_ordered.add_delayed(composit_key.get_value_bits(), obj_id);
     }
 
     #[inline]
     fn insert_str(&mut self, value: &str, obj_id: u32) {
-        self.map.insert_str_from_guard(&mut self.str_radix_map, value, obj_id);
+        self.str_radix_map.add_delayed(value, obj_id);
     }
 
     #[inline]
@@ -75,5 +76,6 @@ impl<'a> Drop for BulkQueryMapAdder<'a> {
         // self.str_radix_map.flush();
         self.num_ordered.flush();
         self.bool_map.flush();
+        self.str_radix_map.flush();
     }
 }

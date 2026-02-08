@@ -1,9 +1,13 @@
 use croaring::Bitmap;
 
+use crate::index::core::structures::buffered_bitmap::BufferedBitmap;
+
+const BUFF_SIZE: usize = 32;
+
 #[derive(Debug, Clone)]
 struct CharacterMap {
-    maps_u8: [Bitmap; 256],
-    boundry_bytes: Bitmap // used to mark boundries for start - end
+    maps_u8: [BufferedBitmap<BUFF_SIZE>; 256],
+    boundry_bytes: BufferedBitmap<BUFF_SIZE> // used to mark boundries for start - end
 }
 
 impl CharacterMap {
@@ -18,6 +22,16 @@ impl CharacterMap {
         }
         unsafe {
             self.maps_u8.get_unchecked_mut(byte_id as usize).add(id)
+        }
+    }
+
+    #[inline(always)]
+    pub fn add_delayed(&mut self, byte_id: u8, id: u32, is_boundry: bool) {
+        if is_boundry {
+            self.boundry_bytes.add_delayed(id);
+        }
+        unsafe {
+            self.maps_u8.get_unchecked_mut(byte_id as usize).add_delayed(id)
         }
     }
 
@@ -45,6 +59,17 @@ impl CharacterMap {
     }
 
     #[inline(always)]
+    pub fn flush(&mut self) {
+        self.boundry_bytes.flush();
+        for byte_id in 0..256 {
+            unsafe {
+                let byte_map = self.maps_u8.get_unchecked_mut(byte_id);
+                byte_map.flush();
+            }
+        }
+    }
+
+    #[inline(always)]
     pub fn merge(&mut self, other: &CharacterMap) {
         unsafe {
             for byte_id in 0..256 {
@@ -65,8 +90,8 @@ impl CharacterMap {
 impl Default for CharacterMap {
     fn default() -> Self {
         Self { 
-            maps_u8: std::array::from_fn( |_| Bitmap::new()),
-            boundry_bytes: Bitmap::new()
+            maps_u8: std::array::from_fn( |_| BufferedBitmap::new()),
+            boundry_bytes: BufferedBitmap::new()
         }
     }
 }
@@ -86,13 +111,22 @@ impl PositionalBitmap {
     #[inline(always)]
     pub fn add(&mut self, s: &str, id: u32) {
         let bytes = s.as_bytes();
-        if bytes.len() > self.map.len() {
-            self.expand_map(bytes.len());
-        }
-        let start = ((self.map.len() / 2) - (bytes.len() / 2)).saturating_sub(1);
+        self.ensure_size(bytes);
+        let start = self.get_start(bytes);
         for i in 0..bytes.len() {
             let is_boundry = i == 0 || i == bytes.len() - 1;
             self.map[i + start].add(bytes[i], id, is_boundry)
+        }
+    }
+
+    #[inline(always)]
+    pub fn add_delayed(&mut self, s: &str, id: u32) {
+        let bytes = s.as_bytes();
+        self.ensure_size(bytes);
+        let start = self.get_start(bytes);
+        for i in 0..bytes.len() {
+            let is_boundry = i == 0 || i == bytes.len() - 1;
+            self.map[i + start].add_delayed(bytes[i], id, is_boundry)
         }
     }
 
@@ -227,6 +261,22 @@ impl PositionalBitmap {
 
         for (self_cm, other_cm) in self.map.iter_mut().zip(other.map.iter()) {
             self_cm.merge(other_cm);
+        }
+    }
+
+    pub fn flush(&mut self) {
+        for char_map in self.map.iter_mut() {
+            char_map.flush();
+        }
+    }
+
+    fn get_start(&self, bytes: &[u8]) -> usize {
+        ((self.map.len() / 2) - (bytes.len() / 2)).saturating_sub(1)
+    }
+
+    fn ensure_size(&mut self, bytes: &[u8]) {
+        if bytes.len() > self.map.len() {
+            self.expand_map(bytes.len());
         }
     }
 
