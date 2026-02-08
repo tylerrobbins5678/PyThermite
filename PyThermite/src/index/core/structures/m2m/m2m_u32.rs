@@ -38,6 +38,16 @@ impl NibbleIndexU32  {
     unsafe fn and_inplace(&self, nibble: usize, bm: &mut Bitmap) {
         bm.and_inplace(self.data.get_unchecked(nibble));
     }
+
+    #[inline(always)]
+    fn contains(&self, id: u32) -> bool {
+        for bm in self.data.iter() {
+            if bm.contains(id) {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 impl Default for NibbleIndexU32  {
@@ -62,6 +72,11 @@ impl M2MU32 {
                 data: Default::default(),
             }),
         }
+    }
+
+    #[inline(always)]
+    pub fn contains(&self, id: u32) -> bool {
+        self.forward_maps[0].contains(id)
     }
 
     #[inline(always)]

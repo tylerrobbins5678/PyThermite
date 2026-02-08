@@ -118,26 +118,14 @@ impl IndexAPI{
                 }
             }
         }
-
-//        for (rust_handle, _) in arc_objs {
-//            for (key, value) in rust_handle.get_py_values().iter() {
-//                self.add_index(weak_self.clone(), rust_handle.id, *key, value);
-//            }
-//        }
     }
 
     pub fn has_object_id(&self, id: u32) -> bool {
-        !Arc::ptr_eq(
-            self.get_items_reader().get(id as usize).unwrap_or(&StoredItem::default()).get_owned_handle(),
-            &DEFAULT_INDEXABLE_ARC
-        )
+        self.get_parent_child_map_reader().contains(id)
     }
 
     pub fn register_path(&self, object_id: u32, parent_id: u32) {
         self.get_parent_child_map_writer().add(object_id, parent_id);
-//        let mut writer = self.get_items_writer();
-//        let obj = writer.get_mut(object_id as usize).unwrap();
-//        obj.add_parent(parent_id);
     }
 
     pub fn deregister_path(&self, object_id: u32, parent_id: u32) {
