@@ -1,57 +1,30 @@
 use croaring::Bitmap;
+use crate::index::core::structures::buffered_bitmap::BufferedBitmap;
 
 
 const BUFF_SIZE: usize = 128;
 
 #[derive(Debug, Clone)]
 pub struct BooleanBitmap {
-    true_bitmap: Bitmap,
-    false_bitmap: Bitmap,
-    true_buffer: [u32; BUFF_SIZE],
-    true_buff_length: usize,
-    false_buffer: [u32; BUFF_SIZE],
-    false_buff_length: usize,
+    true_bitmap: BufferedBitmap<BUFF_SIZE>,
+    false_bitmap: BufferedBitmap<BUFF_SIZE>,
 }
 
 impl BooleanBitmap {
     pub fn new() -> Self {
         Self {
-            true_bitmap: Bitmap::new(),
-            false_bitmap: Bitmap::new(),
-            true_buffer: [0; BUFF_SIZE],
-            true_buff_length: 0,
-            false_buffer: [0; BUFF_SIZE],
-            false_buff_length: 0,
+            true_bitmap: BufferedBitmap::new(),
+            false_bitmap: BufferedBitmap::new(),
         }
     }
 
     pub fn add(&mut self, value: bool, id: u32) {
-        if value {
-            self.true_bitmap.add(id);
-        } else {
-            self.false_bitmap.add(id);
-        }
+        [&mut self.false_bitmap, &mut self.true_bitmap][value as usize].add(id);
     }
 
     #[inline(always)]
     pub fn add_delayed(&mut self, value: bool, id: u32) {
-        if value {
-            unsafe {
-                *self.true_buffer.get_unchecked_mut(self.true_buff_length) = id;
-            }
-            self.true_buff_length += 1;
-            if self.true_buff_length == BUFF_SIZE {
-                self.flush_true();
-            }
-        } else {
-            unsafe {
-                *self.false_buffer.get_unchecked_mut(self.true_buff_length) = id;
-            }
-            self.false_buff_length += 1;
-            if self.false_buff_length == BUFF_SIZE {
-                self.flush_false();
-            }
-        }
+        [&mut self.false_bitmap, &mut self.true_bitmap][value as usize].add_delayed(id);
     }
 
     #[inline(always)]
@@ -62,23 +35,17 @@ impl BooleanBitmap {
 
     #[inline(always)]
     pub fn remove(&mut self, value: bool, id: u32) {
-        if value {
-            self.true_bitmap.remove(id);
-        } else {
-            self.false_bitmap.remove(id);
-        }
+        [&mut self.false_bitmap, &mut self.true_bitmap][value as usize].remove(id);
     }
 
     #[inline(always)]
     pub fn flush_true(&mut self) {
-        self.true_bitmap.add_many(&self.true_buffer[0..self.true_buff_length]);
-        self.true_buff_length = 0;
+        self.true_bitmap.flush();
     }
 
     #[inline(always)]
     pub fn flush_false(&mut self) {
-        self.false_bitmap.add_many(&self.false_buffer[0..self.false_buff_length]);
-        self.false_buff_length = 0;
+        self.false_bitmap.flush();
     }
 
     pub fn flush(&mut self) {
@@ -94,11 +61,7 @@ impl BooleanBitmap {
 
     #[inline(always)]
     pub fn get_exact(&self, value: bool) -> &Bitmap {
-        if value {
-            &self.true_bitmap
-        } else {
-            &self.false_bitmap
-        }
+        [&self.false_bitmap, &self.true_bitmap][value as usize]
     }
 }
 

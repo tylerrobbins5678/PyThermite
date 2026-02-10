@@ -5,7 +5,7 @@ use croaring::Bitmap;
 use crate::index::core::structures::buffered_bitmap::BufferedBitmap;
 
 pub(crate) const BIT_LENGTH: usize = 76; // do not use the whole 128
-const BUFF_SIZE: usize = 128;
+const BUFF_SIZE: usize = 64;
 
 thread_local! {
     pub(crate) static TMP_BITMAP: RefCell<Bitmap> = RefCell::new(Bitmap::new());
@@ -93,6 +93,7 @@ impl NumericalBitmap {
         }
     }
 
+    #[inline(always)]
     pub fn add_delayed(&mut self, value: u128, id: u32) {
         for bit in 0..BIT_LENGTH {
             let v = (value >> bit) as usize & 1;
