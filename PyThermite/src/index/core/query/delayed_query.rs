@@ -67,7 +67,7 @@ impl<'a> BulkQueryMapAdder<'a> {
 
     #[inline]
     fn insert_bool(&mut self, value: bool, obj_id: u32) {
-        self.map.insert_bool_delayed_from_guard(&mut self.bool_map, value, obj_id);
+        self.bool_map.add_delayed(value, obj_id);
     }
 }
 

@@ -2,7 +2,7 @@ use croaring::Bitmap;
 use crate::index::core::structures::buffered_bitmap::BufferedBitmap;
 
 
-const BUFF_SIZE: usize = 128;
+const BUFF_SIZE: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct BooleanBitmap {
