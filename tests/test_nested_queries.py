@@ -35,10 +35,25 @@ def test_string(index):
     assert len(nested_result.collect()) == 1
     assert nested_result.collect()[0].name == "object_3"
 
+def test_string_reduced_children_cleaned_up(index):
+    #  test edge case that after reduced the nested objects are cleaned up as well
+    objs = [TestClass(name=f"object_{i % 2}", child=TestClass(name="child_of")) for i in range(10)]
+    index.add_object_many(objs)
+
+    index.reduce(name="object_1")
+    assert len(index.collect()) == 5
+    assert all(r.name == "object_1" for r in index.collect())
+
+    nested_result = index.reduced_query(Q.eq("child.name", "child_of"))
+    assert len(nested_result.collect()) == 5
+    assert all(r.name == "object_1" for r in nested_result.collect())
+
+
 def test_nest_before_index(index):
     objs = [TestClass(name=f"object_{i}") for i in range(5)]
     for obj in objs:
         obj.child = TestClass(name="child_of", grandchild=TestClass(name="grandchild_of"))
+
     index.add_object_many(objs)
     nested_result = index.reduced_query(Q.eq("child.name", "child_of"))
     tripple_nested_result = index.reduced_query(Q.eq("child.grandchild.name", "grandchild_of"))

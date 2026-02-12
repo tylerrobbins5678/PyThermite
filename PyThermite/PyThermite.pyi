@@ -25,8 +25,8 @@ class Index:
     def reduce(**kwargs): 
         '''
         removes items in place that do not match the given attribute filters
-        Note that this modifies the current index in place and is less performant 
-        than using a method that returns a filteredIndex such as reduced_query or reduced        
+        Note that this modifies the current index in place and is less performant
+        than using a method that returns a filteredIndex such as reduced_query or reduced
         '''
     ...
     def reduced(**kwargs) -> FilteredIndex:
@@ -139,6 +139,22 @@ class PyQueryExpr:
         '''
         attribute is between lower and upper, inclusive
         '''    
+    ...
+
+    def starts_with(attr, start: str) -> PyQueryExpr:
+        '''
+        attribute where the string value starts with the specified start
+        '''
+    ...
+    def ends_with(attr, ends: str) -> PyQueryExpr:
+        '''
+        attribute where the string value ends with the specified end
+        '''
+    ...
+    def contains(attr, inner: str) -> PyQueryExpr:
+        '''
+        attribute where the string value contains with the specified string
+        '''
     ...
 
 class Indexable:

@@ -1,165 +1,126 @@
 
 use std::{collections:: HashSet, ops::Bound};
 
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use croaring::Bitmap;
 use ordered_float::OrderedFloat;
 use pyo3::{PyAny, PyResult, types::{PyAnyMethods, PyString}};
 use smol_str::SmolStr;
 
-use crate::index::{core::{query::QueryMap, structures::{hybrid_set::{HybridSet, HybridSetOps}, string_interner::{INTERNER, StrInternerView}}}, interfaces::PyQueryExpr, types::StrId, value::{PyValue, RustCastValue}};
-use crate::index::core::query::b_tree::Key;
+use crate::index::{core::{query::QueryMap, structures::{composite_key::CompositeKey128, hybrid_set::HybridSetOps, string_interner::{INTERNER, StrInternerView}}}, interfaces::PyQueryExpr, value::{PyValue, RustCastValue}};
 
 impl QueryMap {
 
     pub fn gt(&self, val: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
         // strictly greater than
-        match val {
+        let mut res = match val {
             RustCastValue::Int(i) => {
-                self.read_num_ordered().range_query(
-                    Bound::Excluded(&Key::Int(*i)),
-                    Bound::Unbounded,
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_i64_to_float76(*i);
+                self.read_num_ordered().get_gt_from_valid(bits, all_valid)
             }
             RustCastValue::Float(f) => {
-                self.read_num_ordered().range_query(
-                    Bound::Excluded(&Key::FloatOrdered(OrderedFloat(*f))),
-                    Bound::Unbounded,
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_f64_to_float76(OrderedFloat(*f));
+                self.read_num_ordered().get_gt_from_valid(bits, all_valid)
             }
-            RustCastValue::Str(_) => {
-                Bitmap::new()
-            }
-            RustCastValue::Ind(_) => todo!(),
             _ => {
                 Bitmap::new()
             }
-        }
+        };
+        self.unmask_ids(&mut res);
+        res
     }
 
     pub fn ge(&self, val: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
         // strictly greater than
-        match val {
+        let mut res = match val {
             RustCastValue::Int(i) => {
-                self.read_num_ordered().range_query(
-                    Bound::Included(&Key::Int(*i)),
-                    Bound::Unbounded,
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_i64_to_float76(*i);
+                self.read_num_ordered().get_gte_from_valid(bits, all_valid)
             }
             RustCastValue::Float(f) => {
-                self.read_num_ordered().range_query(
-                    Bound::Included(&Key::FloatOrdered(OrderedFloat(*f))),
-                    Bound::Unbounded,
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_f64_to_float76(OrderedFloat(*f));
+                self.read_num_ordered().get_gte_from_valid(bits, all_valid)
             }
-            RustCastValue::Str(_) => {
-                Bitmap::new()
-            }
-            RustCastValue::Ind(_) => todo!(),
             _ => {
                 Bitmap::new()
             }
-        }
+        };
+        self.unmask_ids(&mut res);
+        res
     }
 
     pub fn lt(&self, val: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
-        match val {
+        let mut res = match val {
             RustCastValue::Int(i) => {
-                self.read_num_ordered().range_query(
-                    Bound::Unbounded,
-                    Bound::Excluded(&Key::Int(*i)),
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_i64_to_float76(*i);
+                self.read_num_ordered().get_lt_from_valid(bits, all_valid)
             }
             RustCastValue::Float(f) => {
-                self.read_num_ordered().range_query(
-                    Bound::Unbounded,
-                    Bound::Excluded(&Key::FloatOrdered(OrderedFloat(*f))),
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_f64_to_float76(OrderedFloat(*f));
+                self.read_num_ordered().get_lt_from_valid(bits, all_valid)
             }
-            RustCastValue::Str(_) => {
-                Bitmap::new()
-            }
-            RustCastValue::Ind(_) => todo!(),
             _ => {
                 Bitmap::new()
             }
-        }
+        };
+        self.unmask_ids(&mut res);
+        res
     }
 
     pub fn le(&self, val: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
         // strictly greater than
-        match val {
+        let mut res = match val {
             RustCastValue::Int(i) => {
-                self.read_num_ordered().range_query(
-                    Bound::Unbounded,
-                    Bound::Included(&Key::Int(*i)),
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_i64_to_float76(*i);
+                self.read_num_ordered().get_lte_from_valid(bits, all_valid)
             }
             RustCastValue::Float(f) => {
-                self.read_num_ordered().range_query(
-                    Bound::Unbounded,
-                    Bound::Included(&Key::FloatOrdered(OrderedFloat(*f))),
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_f64_to_float76(OrderedFloat(*f));
+                self.read_num_ordered().get_lte_from_valid(bits, all_valid)
             }
-            RustCastValue::Str(_) => {
-                Bitmap::new()
-            }
-            RustCastValue::Ind(_) => todo!(),
             _ => {
                 Bitmap::new()
             }
-        }
+        };
+        self.unmask_ids(&mut res);
+        res
     }
 
     pub fn bt(&self, lower: &RustCastValue, upper: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
         let low_range = match lower {
-            RustCastValue::Int(i) => Key::Int(*i),
-            RustCastValue::Float(f) => Key::FloatOrdered(OrderedFloat(*f)),
-            RustCastValue::Str(_) => todo!(),
-            RustCastValue::Ind(_) => todo!(),
+            RustCastValue::Int(i) => CompositeKey128::encode_i64_to_float76(*i),
+            RustCastValue::Float(f) => CompositeKey128::encode_f64_to_float76(OrderedFloat(*f)),
             _ => todo!(),
         };
 
         let upper_range = match upper {
-            RustCastValue::Int(i) => Key::Int(*i),
-            RustCastValue::Float(f) => Key::FloatOrdered(OrderedFloat(*f)),
-            RustCastValue::Str(_) => todo!(),
-            RustCastValue::Ind(_) => todo!(),
+            RustCastValue::Int(i) => CompositeKey128::encode_i64_to_float76(*i),
+            RustCastValue::Float(f) => CompositeKey128::encode_f64_to_float76(OrderedFloat(*f)),
             _ => todo!(),
         };
 
-        self.read_num_ordered().range_query(
-            Bound::Included(&low_range),
-            Bound::Included(&upper_range),
-            all_valid
-        )
+        let reader = self.read_num_ordered();
+        let mut res = reader.get_bt_from_valid(low_range, upper_range, all_valid);
+        self.unmask_ids(&mut res);
+        res
     }
 
     pub fn eq(&self, val: &PyValue, all_valid: &Bitmap) -> Bitmap {
 
-        match val.get_primitive() {
+        let mut res = match val.get_primitive() {
             RustCastValue::Int(i) => {
-                self.read_num_ordered().range_query(
-                    Bound::Included(&Key::Int(*i)),
-                    Bound::Included(&Key::Int(*i)),
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_i64_to_float76(*i);
+                self.read_num_ordered().get_exact(bits)
             }
             RustCastValue::Float(f) => {
-                self.read_num_ordered().range_query(
-                    Bound::Included(&Key::FloatOrdered(OrderedFloat(*f))),
-                    Bound::Included(&Key::FloatOrdered(OrderedFloat(*f))),
-                    all_valid
-                )
+                let bits = CompositeKey128::encode_f64_to_float76(OrderedFloat(*f));
+                self.read_num_ordered().get_exact(bits)
+            }
+            RustCastValue::Str(extracted_str) => {
+                self.read_str_radix_map().get_exact(extracted_str)
+            }
+            RustCastValue::Bool(b) => {
+                self.get_bool_map_reader().get_exact(*b).clone()
             }
             _ => {
                 if let Some(res) = self.exact.get(val){
@@ -168,66 +129,90 @@ impl QueryMap {
                     Bitmap::new()
                 }
             }
-        }
+        };
+        self.unmask_ids(&mut res);
+        res
+    }
+
+    fn starts_with(&self, start: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
+        let mut res = match start {
+            RustCastValue::Str(smol_str) => {
+                let res = self.read_str_radix_map().starts_with(smol_str);
+                res
+            },
+            _ => Bitmap::new(),
+        };
+        self.unmask_ids(&mut res);
+        res
+    }
+
+
+    fn ends_with(&self, end: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
+       let mut res =  match end {
+            RustCastValue::Str(smol_str) => {
+                let res = self.read_str_radix_map().ends_with(smol_str);
+                res
+            },
+            _ => Bitmap::new(),
+        };
+        self.unmask_ids(&mut res);
+        res
+    }
+
+    fn contains(&self, inner: &RustCastValue, all_valid: &Bitmap) -> Bitmap {
+        let mut res = match inner {
+            RustCastValue::Str(smol_str) => {
+                let res = self.read_str_radix_map().contains(smol_str);
+                res
+            },
+            _ => Bitmap::new(),
+        };
+        self.unmask_ids(&mut res);
+        res
     }
 
 }
-
-pub fn filter_index_by_hashes(
-    index: &Vec<QueryMap>,
-    query: &FxHashMap<SmolStr, HashSet<PyValue>>,
-) -> Bitmap {
-    let mut sets_iter: Bitmap = Bitmap::new();
-    let mut first = true;
-    
-    let mut per_attr_match: Bitmap = Bitmap::new();
-    let mut interner = StrInternerView::new(&INTERNER);
-
-    for (attr, allowed_hashes) in query.iter() {
-        let attr_id = interner.intern(attr) as usize;
-        per_attr_match.clear();
-
-
-        if let None = index.get(attr_id) {
-            return Bitmap::new();
-        } 
-        let attr_map = &index[attr_id];
-        
-        for h in allowed_hashes {
-            if let Some(matched) = attr_map.exact.get(h) {
-                per_attr_match |= matched.as_bitmap();
-            }
-        }
-
-        if !first && sets_iter.is_empty() {
-            return Bitmap::new();
-        }
-
-        if first {
-            sets_iter = per_attr_match.clone();
-        } else {
-            sets_iter &= &per_attr_match;
-        }
-        first = false;
-    }
-
-    sets_iter
-}
-
 
 #[derive(Clone, Debug)]
 pub enum QueryExpr {
     Eq(SmolStr, PyValue),
     Ne(SmolStr, PyValue),
+    Not(Box<QueryExpr>),
+
+    In(SmolStr, Vec<PyValue>),
+    And(Vec<QueryExpr>),
+    Or(Vec<QueryExpr>),
+    // numeric ops
     Gt(SmolStr, PyValue),
     Ge(SmolStr, PyValue),
     Lt(SmolStr, PyValue),
     Le(SmolStr, PyValue),
     Bt(SmolStr, PyValue, PyValue),
-    In(SmolStr, Vec<PyValue>),
-    Not(Box<QueryExpr>),
-    And(Vec<QueryExpr>),
-    Or(Vec<QueryExpr>),
+    // string ops
+    StartsWi(SmolStr, PyValue),
+    EndsWi(SmolStr, PyValue),
+    Contains(SmolStr, PyValue),
+}
+
+impl QueryExpr {
+    pub fn estimated_cost(&self) -> u32 {
+        match self {
+            QueryExpr::Eq(_, _) => 0,
+            QueryExpr::Ne(_, _) => 1,
+            QueryExpr::Not(_) => 2,
+            QueryExpr::In(_, _) => 3,
+            QueryExpr::StartsWi(_, _) => 4,
+            QueryExpr::EndsWi(_, _) => 5,
+            QueryExpr::Contains(_, _) => 6,
+            QueryExpr::And(_) => 7,
+            QueryExpr::Or(_) => 8,
+            QueryExpr::Lt(_, _) => 9,
+            QueryExpr::Le(_, _) => 10,
+            QueryExpr::Gt(_, _) => 11,
+            QueryExpr::Ge(_, _) => 12,
+            QueryExpr::Bt(_, _, _) => 13,
+        }
+    }
 }
 
 pub fn attr_parts(attr: SmolStr) -> (SmolStr, Option<SmolStr>) {
@@ -246,7 +231,7 @@ pub fn evaluate_nested_query(
 ) -> Bitmap {
     let wrapper = PyQueryExpr{inner: expr.clone()};
     let reduced = nested_map.nested.reduced_query(wrapper);
-    nested_map.get_allowed_parents(&reduced.allowed_items).as_bitmap()
+    nested_map.get_allowed_parents(&reduced.allowed_items)
 }
 
 pub fn evaluate_query(
@@ -281,7 +266,7 @@ pub fn evaluate_query(
             let mut result;
             let base_attr_id = INTERNER.intern(&base_attr) as usize;
             if let Some(qm) = index.get(base_attr_id) {
-                
+        
                 if let Some(nested_attr) = nested_attr {
                     let query = QueryExpr::In(nested_attr, values.clone());
                     result = evaluate_nested_query(qm, &query);
@@ -378,20 +363,21 @@ pub fn evaluate_query(
                 all_valid - &inner_bm
         }
         QueryExpr::And(exprs) => {
+            evaluate_and_queries_vec(index, all_valid, exprs)
             // Evaluate all queries in parallel
-            let mut bitmaps: Vec<Bitmap> = evaluate_queries_vec(index, all_valid, exprs);
-            bitmaps.sort_by_key(|bm| bm.cardinality());
-
-            // Reduce using AND in parallel
-            let result = bitmaps
-                .into_iter()
-                .reduce(|mut a, b| {
-                    a.and_inplace(&b); // mutate `a` in-place
-                    a
-                })
-                .unwrap_or_else(Bitmap::new); // handle empty exprs
-
-            result
+//            let mut bitmaps: Vec<Bitmap> = evaluate_queries_vec(index, all_valid, exprs);
+//            bitmaps.sort_by_key(|bm| bm.cardinality());
+//
+//            // Reduce using AND in parallel
+//            let result = bitmaps
+//                .into_iter()
+//                .reduce(|mut a, b| {
+//                    a.and_inplace(&b); // mutate `a` in-place
+//                    a
+//                })
+//                .unwrap_or_else(Bitmap::new); // handle empty exprs
+//
+//            result
         }
         QueryExpr::Or(exprs) => {
             evaluate_queries_vec(index, all_valid, exprs)
@@ -402,6 +388,52 @@ pub fn evaluate_query(
                 })
                 .unwrap_or_else(Bitmap::new) // handle empty exprs
         }
+        
+        QueryExpr::StartsWi(attr, py_value) => {
+            let (base_attr, nested_attr) = attr_parts(attr.clone());
+            let base_attr_id = INTERNER.intern(&base_attr) as usize;
+
+            if let Some(qm) = index.get(base_attr_id) {
+                if let Some(nested_attr) = nested_attr {
+                    let query = QueryExpr::StartsWi(nested_attr, py_value.clone());
+                    evaluate_nested_query(qm, &query)
+                } else {
+                    qm.starts_with(py_value.get_primitive(), all_valid)
+                }
+            } else {
+                Bitmap::new()
+            }
+        },
+        QueryExpr::EndsWi(attr, py_value) => {
+            let (base_attr, nested_attr) = attr_parts(attr.clone());
+            let base_attr_id = INTERNER.intern(&base_attr) as usize;
+
+            if let Some(qm) = index.get(base_attr_id) {
+                if let Some(nested_attr) = nested_attr {
+                    let query = QueryExpr::EndsWi(nested_attr, py_value.clone());
+                    evaluate_nested_query(qm, &query)
+                } else {
+                    qm.ends_with(py_value.get_primitive(), all_valid)
+                }
+            } else {
+                Bitmap::new()
+            }
+        },
+        QueryExpr::Contains(attr, py_value) => {
+            let (base_attr, nested_attr) = attr_parts(attr.clone());
+            let base_attr_id = INTERNER.intern(&base_attr) as usize;
+
+            if let Some(qm) = index.get(base_attr_id) {
+                if let Some(nested_attr) = nested_attr {
+                    let query = QueryExpr::Contains(nested_attr, py_value.clone());
+                    evaluate_nested_query(qm, &query)
+                } else {
+                    qm.contains(py_value.get_primitive(), all_valid)
+                }
+            } else {
+                Bitmap::new()
+            }
+        },
     }
 }
 
@@ -416,38 +448,33 @@ pub fn evaluate_queries_vec(
         .collect()
 }
 
-pub fn kwargs_to_hash_query<'py>(
-    kwargs: FxHashMap<String, pyo3::Bound<'py, PyAny>>,
-) -> PyResult<FxHashMap<SmolStr, HashSet<PyValue>>> {
-    let mut query = FxHashMap::default();
+pub fn evaluate_and_queries_vec(
+    index: &Vec<QueryMap>,
+    all_valid: &Bitmap,
+    exprs: &Vec<QueryExpr>,
+) -> Bitmap {
+    let mut all_valid = all_valid.clone();
 
-    for (attr, py_val) in kwargs {
-        let mut hash_set = HashSet::new();
-
-        // Detect if iterable but not string
-        let is_str = py_val.is_instance_of::<PyString>();
-
-        if !is_str {
-            match py_val.try_iter() {
-                Ok(iter) => {
-                    for item in iter {
-                        let lookup_item = PyValue::new(item.unwrap());
-                        hash_set.insert(lookup_item);
-                    }
-                }
-                Err(_) => {
-                    // Not iterable, treat as a single value
-                    hash_set.insert(PyValue::new(py_val));
-                }
-            }
-        } else {
-            // Is a string, treat as a single value
-            hash_set.insert(PyValue::new(py_val));
-        }
-
-        // Single value
-        query.insert(SmolStr::new(attr), hash_set);
+    let mut ordered: Vec<&QueryExpr> = exprs.iter().collect();
+    ordered.sort_by_key(|expr| expr.estimated_cost());
+    for o in ordered {
+        all_valid.and_inplace(&evaluate_query(index, &all_valid, o));
     }
+    all_valid
+}
 
-    Ok(query)
+pub fn kwargs_to_query<'py>(
+    kwargs: Option<FxHashMap<String, pyo3::Bound<'py, PyAny>>>,
+) -> FxHashMap<SmolStr, PyValue> {
+    let mut query: FxHashMap<SmolStr, PyValue> = FxHashMap::default();
+    match kwargs {
+        Some(map) => {
+            for (key, val) in map {
+                let py_value = PyValue::new(val);
+                query.insert(key.into(), py_value);
+            }
+        },
+        None => {}
+    }
+    query
 }

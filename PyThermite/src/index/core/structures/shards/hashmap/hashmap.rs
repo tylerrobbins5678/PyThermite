@@ -1,10 +1,10 @@
-use std::{collections::HashMap, hash::{BuildHasher, Hash, Hasher}, sync::{RwLock, RwLockWriteGuard}};
+use std::{collections::HashMap, hash::{BuildHasher, Hash, Hasher}, sync::{Arc, RwLock, RwLockWriteGuard}};
 
 use rustc_hash::FxBuildHasher;
 
-
+#[derive(Clone)]
 pub struct ShardedHashMap<K, V> {
-    shards: Box<[RwLock<HashMap<K, V>>]>,
+    shards: Arc<[RwLock<HashMap<K, V>>]>,
     mask: usize,
 }
 
@@ -24,7 +24,7 @@ where
         }
 
         Self {
-            shards: shards.into_boxed_slice(),
+            shards: shards.into(),
             mask: shard_count - 1,
         }
     }
@@ -80,7 +80,7 @@ where
     }
 
     pub fn for_each<F: FnMut(&K, &V)>(&self, mut f: F) {
-        for shard in &self.shards {
+        for shard in self.shards.iter() {
             let guard = shard.read().unwrap();
             for (k, v) in guard.iter() {
                 f(k, v);
@@ -89,7 +89,7 @@ where
     }
 
     pub fn for_each_mut<F: FnMut(&K, &mut V)>(&self, mut f: F) {
-        for shard in &self.shards {
+        for shard in self.shards.iter() {
             let mut guard = shard.write().unwrap();
             for (k, v) in guard.iter_mut() { // <-- iter_mut() gives &mut V
                 f(k, v);

@@ -1,5 +1,4 @@
 pub mod ranged_b_tree;
-pub mod composite_key;
 pub mod key;
 pub mod nodes;
 

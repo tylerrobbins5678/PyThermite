@@ -4,7 +4,7 @@ use once_cell::sync::{Lazy, OnceCell};
 use pyo3::{Py, PyAny, PyTypeInfo, Python, types::{PyAnyMethods, PyType}};
 use smallvec::SmallVec;
 
-use crate::index::{HybridHashmap, Indexable, core::{index::IndexAPI, query::QueryMap}};
+use crate::index::{Indexable, core::{index::IndexAPI, query::QueryMap}};
 
 pub type StrId = u32;
 pub type IndexTree = Arc<RwLock<Vec<QueryMap>>>;

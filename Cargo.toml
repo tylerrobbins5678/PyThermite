@@ -1,6 +1,6 @@
 [package]
 name = "pythermite"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2021"
 
 [lib]
@@ -15,16 +15,19 @@ path = "PyThermite/src/main.rs"
 
 [profile.release]
 opt-level = 3
+lto = true
+codegen-units = 1
 
 [dependencies]
-croaring = "2.3.1"
+croaring = "2.5.2"
 pyo3 = { version = "0.25.1", features = ["extension-module"] }
 ordered-float = "5.0.0"
-rayon = "1.10.0"
 rustc-hash = "2.1.1"
 smallvec = "1.15.1"
 once_cell = "1.21.3"
-smol_str = "0.3.2"
+smol_str = "0.3.5"
 arc-swap = "1.7.1"
 hashbrown = "0.16.1"
 bumpalo = "3.19.1"
+rand = "0.9.2"
+rayon = "1.11.0"

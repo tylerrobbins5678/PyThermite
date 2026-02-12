@@ -92,6 +92,27 @@ impl PyQueryExpr {
         }
     }
 
+    #[staticmethod]
+    fn starts_with<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
+        Self {
+            inner: QueryExpr::StartsWi(SmolStr::new(attr), PyValue::new(value)),
+        }
+    }
+
+    #[staticmethod]
+    fn ends_with<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
+        Self {
+            inner: QueryExpr::EndsWi(SmolStr::new(attr), PyValue::new(value)),
+        }
+    }
+
+    #[staticmethod]
+    fn contains<'py>(attr: String, value: pyo3::Bound<'py, PyAny>) -> Self {
+        Self {
+            inner: QueryExpr::Contains(SmolStr::new(attr), PyValue::new(value)),
+        }
+    }
+
     fn __repr__(&self) -> String {
         format!("<QueryExpr: {:?}>", self.inner)
     }

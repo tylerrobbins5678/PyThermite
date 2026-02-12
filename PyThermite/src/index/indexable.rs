@@ -1,22 +1,18 @@
-use arc_swap::Guard;
 use pyo3::exceptions::PyAttributeError;
 use pyo3::types::PyDictMethods;
 use pyo3::types::PyStringMethods;
 use pyo3::{ffi, IntoPyObjectExt, PyErr, PyRef};
 
 use smallvec::SmallVec;
-use once_cell::sync::Lazy;
-use arc_swap::ArcSwap;
 
 use std::fmt;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::MutexGuard;
 use std::sync::{Arc, Mutex, Weak};
 use std::hash::{Hash, Hasher};
 use pyo3::{pyclass, pymethods, types::{PyAnyMethods, PyDict, PyList, PyString}, Bound, Py, PyAny, PyObject, PyResult, Python};
 
-use smol_str::SmolStr;
-
+use crate::index::core::id_alloc::allocate_id;
+use crate::index::core::id_alloc::free_id;
 use crate::index::core::structures::string_interner::INTERNER;
 use crate::index::core::structures::string_interner::StrInternerView;
 use crate::index::types::DEFAULT_INDEX_ARC;
@@ -24,26 +20,6 @@ use crate::index::types::StrId;
 use crate::index::value::PyValue;
 use crate::index::HybridHashmap;
 use crate::index::core::index::IndexAPI;
-
-static GLOBAL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
-
-static FREE_IDS: Lazy<Mutex<Vec<u32>>> = Lazy::new(|| Mutex::new(Vec::new()));
-
-
-pub fn allocate_id() -> u32 {
-    let mut free = FREE_IDS.lock().unwrap();
-
-    if let Some(id) = free.pop() {
-        id
-    } else {
-        GLOBAL_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
-    }
-}
-
-pub fn free_id(id: u32) {
-    let mut free = FREE_IDS.lock().unwrap();
-    free.push(id);
-}
 
 
 struct IndexMeta{
@@ -72,7 +48,7 @@ impl Indexable{
         let mut interner = StrInternerView::new(&INTERNER);
 
         if let Some(dict) = kwargs {
-            py_values = HybridHashmap::Small(SmallVec::new());
+            py_values = HybridHashmap::new();
             for (key, value) in dict.iter() {
                 if let Ok(key_str) = key.extract::<&str>() {
                     let key_id: StrId = interner.intern(key_str);
@@ -80,7 +56,7 @@ impl Indexable{
                 }
             }
         } else {
-            py_values = HybridHashmap::Small(SmallVec::new());
+            py_values = HybridHashmap::new();
         }
 
         Self {
@@ -95,9 +71,9 @@ impl Indexable{
 
         let val: PyValue = PyValue::new(value);
 
-        py.allow_threads(||{
-            let mut interner = StrInternerView::new(&INTERNER);
-            for ind in self.meta.lock().unwrap().iter() {
+        let mut interner = StrInternerView::new(&INTERNER);
+        for ind in self.meta.lock().unwrap().iter() {
+            py.allow_threads(||{
                 if let Some(full_index) = ind.index.upgrade() {
                     let name_id = interner.intern(name);
                     if let Some(old_val) = self.get_py_values().get(&name_id){
@@ -106,11 +82,11 @@ impl Indexable{
                         full_index.update_index(ind.index.clone(), name_id, None, &val, self.id);
                     }
                 }
-            }
-        });
+            });
+        }
 
         // update value
-        let str_id: StrId = INTERNER.intern(name);
+        let str_id: StrId = interner.intern(name);
         self.py_values.lock().unwrap().insert(str_id, val);
         Ok(())
     }
@@ -208,7 +184,8 @@ impl Indexable {
     }
 
     pub fn get_py_values(&self) -> MutexGuard<'_, HybridHashmap<StrId, PyValue>>{
-        self.py_values.lock().unwrap()
+        // self.py_values.try_lock().expect("cannot read from indexable")
+        self.py_values.lock().expect("cannot read from indexable")
     }
 
     pub fn with_attr_id<F, R>(&self, str_id: StrId, f: F) -> Option<R>
@@ -254,7 +231,7 @@ impl Default for Indexable {
         Self {
             meta: Arc::new(Mutex::new(SmallVec::new())),
             id: allocate_id(),
-            py_values: Arc::new(Mutex::new(HybridHashmap::Small(SmallVec::new()))),
+            py_values: Arc::new(Mutex::new(HybridHashmap::new())),
             recycle_id_on_drop: true
         }
     }

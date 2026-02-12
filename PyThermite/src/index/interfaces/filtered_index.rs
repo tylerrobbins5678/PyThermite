@@ -5,10 +5,10 @@ use pyo3::{pyclass, pymethods, Py, PyAny, PyResult, Python};
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 
-use crate::index::{Index, Indexable, PyQueryExpr, types::{IndexTree, StrId}};
+use crate::index::{Index, Indexable, PyQueryExpr, core::{query::query_ops::{QueryExpr, evaluate_and_queries_vec}, structures::m2m::M2MU32}, types::IndexTree, value::PyValue};
 use crate::index::core::stored_item::StoredItem;
 use crate::index::core::index::IndexAPI;
-use crate::index::core::query::{evaluate_query, filter_index_by_hashes, kwargs_to_hash_query, QueryMap};
+use crate::index::core::query::{evaluate_query, QueryMap};
 
 #[pyclass]
 #[derive(Clone)]
@@ -28,13 +28,28 @@ impl FilteredIndex{
         py: Python,
         kwargs: Option<FxHashMap<String, pyo3::Bound<'py, PyAny>>>,
     ) -> PyResult<FilteredIndex> {
-        let query = kwargs_to_hash_query(kwargs.unwrap_or_default())?;
-        py.allow_threads(|| {
+
+        let mut query: FxHashMap<SmolStr, PyValue> = FxHashMap::default();
+        match kwargs {
+            Some(map) => {
+                for (key, val) in map {
+                    let py_value = PyValue::new(val);
+                    query.insert(key.into(), py_value);
+                }
+            },
+            None => {}
+        }
+
+        py.allow_threads(move || {
             let index = self.index.read().unwrap();
+            let exprs: Vec<QueryExpr> = query.into_iter().map(|(k, v)| {
+                QueryExpr::Eq(k, v)
+            }).collect();
+
             Ok(FilteredIndex {
                 index: self.index.clone(),
                 items: self.items.clone(),
-                allowed_items: filter_index_by_hashes(&index, &query).and(&self.allowed_items)
+                allowed_items: evaluate_and_queries_vec(&index, &self.allowed_items, &exprs)
             })
         })
     }
@@ -61,6 +76,7 @@ impl FilteredIndex{
             index: Arc::new(RwLock::new(vec![])),
             items: Arc::new(RwLock::new(Vec::with_capacity(max_size as usize))),
             allowed_items: Arc::new(RwLock::new(self.allowed_items.clone())),
+            parent_child_map: Arc::new(RwLock::new(M2MU32::new())),
             parent_index: None,
         };
         
@@ -86,7 +102,7 @@ impl FilteredIndex{
                         val_map.insert(&val, idx);
                     },
                     None => {
-                        let qmap = QueryMap::new(res_index_arc.clone(), *attr_id);
+                        let qmap = QueryMap::new(res_index_arc.clone());
                         qmap.insert(&val, idx);
                         new_index.insert(*attr_id as usize, qmap);
                     }

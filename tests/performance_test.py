@@ -85,7 +85,7 @@ def test_performance(prep_data_fixture):
     py_objects = [row for row in data]
 
     cols = ["id", "age", "score", "active", "country", "group", "tags"]
-    
+
     curr = mem_usage_mb()
     start = time.perf_counter()
     df = pd.DataFrame(prep_data_fixture, columns=cols)
@@ -100,23 +100,36 @@ def test_performance(prep_data_fixture):
     for i in range(ITERATIONS):
         filtered_df = df[
             (
-                (df["age"].between(35, 60)) &
-                (df["active"]) &
-                (df["score"] > 85.0)
-            ) |
+                (
+                    (df["age"].between(35, 60)) &
+                    (df["active"]) &
+                    (df["score"] > 85.0)
+                ) |
+                (
+                    (df["country"].isin(["CA", "MX"])) &
+                    (df["score"].between(50.0, 75.0)) &
+                    (df["tags"] != "b")
+                )
+            )
+            &
             (
-                (df["country"].isin(["CA", "MX"])) &
-                (df["score"].between(50.0, 75.0)) &
-                (df["tags"] != "b")
+                (df["group"] != "guest") &
+                (df["age"] < 65) &
+                (df["country"] != "US")
+            )
+            &
+            (
+                (
+                    df["group"].str.startswith("ab") &
+                    (~df["group"].str.endswith("zz"))
+                )
+                |
+                (
+                    df["country"].str.startswith("C") &
+                    df["tags"].str.endswith("a")
+                )
             )
         ]
-
-        filtered_df = filtered_df[
-            (filtered_df["group"] != "guest") &
-            (filtered_df["age"] < 65) &
-            (filtered_df["country"] != "US")
-        ]
-
     duration_df = time.perf_counter() - start
     filtered_df.to_dict(orient="records")
     mem_df = mem_usage_mb() - curr
@@ -136,19 +149,29 @@ def test_performance(prep_data_fixture):
         query = Q.and_(
             Q.or_(
                 Q.and_(
-                    Q.eq("active", True),
                     Q.bt("age", 35, 60),
+                    Q.eq("active", True),
                     Q.gt("score", 85.0),
                 ),
                 Q.and_(
                     Q.in_("country", ["CA", "MX"]),
                     Q.bt("score", 50.0, 75.0),
                     Q.ne("tags", "b"),
-                )
+                ),
             ),
             Q.ne("group", "guest"),
-            Q.ne("country", "US"),
             Q.lt("age", 65),
+            Q.ne("country", "US"),
+            Q.or_(
+                Q.and_(
+                    Q.starts_with("group", "ab"),
+                    Q.not_(Q.ends_with("group", "zz")),
+                ),
+                Q.and_(
+                    Q.starts_with("country", "C"),
+                    Q.ends_with("tags", "a"),
+                ),
+            ),
         )
         result = index.reduced_query(query)
     #    filtered_ix = index.reduced(b = 2, a = 1000)
@@ -160,16 +183,6 @@ def test_performance(prep_data_fixture):
     # Print Results
     print("\n==== Benchmark Results ====")
 
-    test = index.collect()[0]
-    test1 = index.collect()[1]
-    test.test_val = test1
-
-    start = time.perf_counter()
-
-    index.group_by("id")
-
-    duration_group = time.perf_counter() - start
-
 #    nested_test = index.reduced_query(
 #        query = Q.eq("test_val.age" ,  test1.age)
 #    ).collect()
@@ -178,7 +191,7 @@ def test_performance(prep_data_fixture):
 #    assert len(filtered_df) == len(filtered_ix)
 
     print(f"Object Build:                   {object_build_time:.4f} s")
-    print(f"Group by operation on ID:       {duration_group:.4f} s")
+    # print(f"Group by operation on ID:       {duration_group:.4f} s")
     print(f"Pandas Filter Build index:      {pandas_build_time:.4f} s | Mem: {mem_pix:.1f} MB")
     print(f"Pandas Filter:                  {duration_df:.6f} s | Mem: {mem_df:.1f} MB | Result size: {len(filtered_df)}")
     print(f"Your Index Filter Build index:  {duration_bix:.4f} s | Mem: {mem_bix:.1f} MB")

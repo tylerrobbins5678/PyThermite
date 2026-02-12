@@ -60,6 +60,21 @@ def test_query(index):
     assert all(obj.active is True and obj.score > 50.0 for obj in result)
     assert len(result) == 2  # Should be objects with num 6 and 8
 
+def test_query_raw_object(index):
+
+    class SomeClass:
+        pass
+
+    objs = [TestClass(num=i, active=(i % 2 == 0), score=float(i) * 10.0) for i in range(10)]
+    index.add_object_many(objs)
+    some_instance = SomeClass()
+    objs[4].some_class = some_instance
+
+    result = index.reduced_query(Q.eq('some_class', some_instance)).collect()
+    assert len(result) == 1
+    assert result[0].some_class is some_instance
+    assert result[0].num == 4
+
 def test_query_chain(index):
     objs = [TestClass(num=i, active=(i % 2 == 0), score=float(i) * 10.0) for i in range(10)]
     index.add_object_many(objs)
@@ -84,8 +99,25 @@ def test_filtered_index(index):
 
     # initial filter
     filtered_index = index.reduced(active=True)
+    assert len(filtered_index.collect()) == 5
     # filter the filtered
     reduced = filtered_index.reduced_query(
+        Q.gt("score", 50.0)
+    )
+
+    result = reduced.collect()
+    assert all(obj.active is True and obj.score > 50.0 for obj in result)
+    assert len(result) == 2
+
+def test_reduce_index(index):
+    objs = [TestClass(num=i, active=(i % 2 == 0), score=float(i) * 10.0) for i in range(10)]
+    index.add_object_many(objs)
+
+    # mutate in place filter
+    index.reduce(active=True)
+    assert len(index.collect()) == 5
+    # filter the filtered
+    reduced = index.reduced_query(
         Q.gt("score", 50.0)
     )
 
@@ -114,7 +146,8 @@ def test_nested_object_query(index):
     class NestedTestClass(Indexable):
         pass
 
-    nested_objs = [TestClass(num=i, nested=NestedTestClass(num=i * 10)) for i in range(5)]
+    n = [NestedTestClass(num=i * 10) for i in range(5)]
+    nested_objs = [TestClass(num=i, nested=n[i]) for i in range(5)]
     index.add_object_many(nested_objs)
 
     # Query based on nested object's attribute
@@ -152,4 +185,60 @@ def test_union_with(index):
     index_2.add_object_many(objs)
 
     index.union_with(index_2)
-    result = index.collect()
+    assert len(index.collect()) == 20
+
+    for i in range(10):
+        res = index.reduced_query(Q.eq("num", i)).collect()
+        assert len(res) == 2
+    
+    for ind in ["A", "B"]:
+        res = index.reduced_query(Q.eq("ind", ind)).collect()
+        assert len(res) == 10
+
+def test_number_collissions_list(index):
+    # this test a new type of issue where bitset algebra is used
+    # to derive the result of iterable objects (list and set)
+    nums = [i for i in range(1024)]
+    nested = TestClass(nums=nums)
+    index.add_object_many([nested])
+    res = index.reduced_query(
+        Q.eq("nums", 1024)
+    )
+    assert len(res.collect()) == 0
+
+    res = index.reduced_query(
+        Q.eq("nums", 1023)
+    )
+    assert len(res.collect()) == 1
+
+def test_number_collissions_set(index):
+    # this test a new type of issue where bitset algebra is used
+    # to derive the result of iterable objects (list and set)
+    nums = set(i for i in range(1024))
+    nested = TestClass(nums=nums)
+    index.add_object_many([nested])
+    res = index.reduced_query(
+        Q.eq("nums", 1024)
+    )
+    assert len(res.collect()) == 0
+
+    res = index.reduced_query(
+        Q.eq("nums", 1023)
+    )
+    assert len(res.collect()) == 1
+
+def test_number_collissions_tuple(index):
+    # this test a new type of issue where bitset algebra is used
+    # to derive the result of iterable objects (list and set)
+    nums = tuple(i for i in range(1024))
+    nested = TestClass(nums=nums)
+    index.add_object_many([nested])
+    res = index.reduced_query(
+        Q.eq("nums", 1024)
+    )
+    assert len(res.collect()) == 0
+
+    res = index.reduced_query(
+        Q.eq("nums", 1023)
+    )
+    assert len(res.collect()) == 1
