@@ -371,10 +371,6 @@ impl QueryMap {
         });
     }
 
-    pub fn group_by(&self, sub_query: SmolStr) -> Option<SmallVec<[(PyValue, HybridSet); QUERY_DEPTH_LEN]>> {
-        None
-    }
-
     pub fn get_allowed_parents(&self, child_bm: &Bitmap) -> Bitmap {
         self.nested.get_parent_from_ids(child_bm)
     }
