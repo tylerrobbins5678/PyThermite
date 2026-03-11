@@ -99,12 +99,14 @@ impl Default for CharacterMap {
 #[derive(Debug, Default)]
 pub struct PositionalBitmap {
     map: Vec<CharacterMap>,
+    empty: BufferedBitmap<BUFF_SIZE>,
 }
 
 impl PositionalBitmap {
     pub fn new() -> Self {
         Self {
             map: Vec::new(),
+            empty: BufferedBitmap::new(),
         }
     }
 
@@ -113,9 +115,14 @@ impl PositionalBitmap {
         let bytes = s.as_bytes();
         self.ensure_size(bytes);
         let start = self.get_start(bytes);
-        for i in 0..bytes.len() {
-            let is_boundry = i == 0 || i == bytes.len() - 1;
-            self.map[i + start].add(bytes[i], id, is_boundry)
+        match bytes.len() {
+            0 => self.empty.add(id),
+            _ => {
+                for i in 0..bytes.len() {
+                    let is_boundry = i == 0 || i == bytes.len() - 1;
+                    self.map[i + start].add(bytes[i], id, is_boundry);
+                }
+            }
         }
     }
 
@@ -124,9 +131,14 @@ impl PositionalBitmap {
         let bytes = s.as_bytes();
         self.ensure_size(bytes);
         let start = self.get_start(bytes);
-        for i in 0..bytes.len() {
-            let is_boundry = i == 0 || i == bytes.len() - 1;
-            self.map[i + start].add_delayed(bytes[i], id, is_boundry)
+        match bytes.len() {
+            0 => self.empty.add(id),
+            _ => {
+                for i in 0..bytes.len() {
+                    let is_boundry = i == 0 || i == bytes.len() - 1;
+                    self.map[i + start].add_delayed(bytes[i], id, is_boundry);
+                }
+            }
         }
     }
 
@@ -134,8 +146,13 @@ impl PositionalBitmap {
     pub fn remove(&mut self, s: &str, id: u32) {
         let bytes = s.as_bytes();
         let start = ((self.map.len() / 2) - (bytes.len() / 2)).saturating_sub(1);
-        for i in 0..bytes.len() {
-            self.map[i + start].remove(bytes[i], id)
+        match bytes.len() {
+            0 => self.empty.remove(id),
+            _ => {
+                for i in 0..bytes.len() {
+                    self.map[i + start].remove(bytes[i], id);
+                }
+            }
         }
     }
 
@@ -144,6 +161,7 @@ impl PositionalBitmap {
         for cm in self.map.iter_mut() {
             cm.keep_only(ids);
         }
+        self.empty.and_inplace(ids);
     }
 
     #[inline(always)]
@@ -152,6 +170,7 @@ impl PositionalBitmap {
         for i in 0..(self.map.len() + 1) / 2 {
             res.or_inplace(self.map[i].get_boundry_bytes());
         }
+        res.or_inplace(&self.empty);
         res
     }
 
@@ -160,6 +179,9 @@ impl PositionalBitmap {
         let mut res = Bitmap::new();
         let bytes = chars.as_bytes();
         if bytes.len() > self.map.len() {
+            return res;
+        } else if bytes.is_empty() {
+            res.or_inplace(&self.empty);
             return res;
         }
 
@@ -419,6 +441,18 @@ mod tests {
         assert!(!result.contains(1));
         assert!(!result.contains(2));
         assert!(!result.contains(3));
+    }
+
+    #[test]
+    fn test_empty_string() {
+        let mut pb = PositionalBitmap::new();
+        pb.add("", 1);
+        pb.add("hello", 2);
+
+        let result = pb.starts_with("he");
+        assert!(result.contains(2), "ID 2 should match");
+        let result = pb.get_exact("");
+        assert!(result.contains(1), "ID 1 should match");
     }
 
     #[test]
