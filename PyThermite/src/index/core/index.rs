@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
-use crate::index::{HybridHashmap, Indexable, PyQueryExpr, core::{query::{BulkQueryMapAdder, query_ops::{QueryExpr, evaluate_and_queries_vec}}, structures::{hybrid_set::{HybridSet, HybridSetOps}, m2m::M2MU32, string_interner::INTERNER}}, interfaces::filtered_index::FilteredIndex, types::{DEFAULT_INDEXABLE_ARC, IndexTree, StrId}};
+use crate::index::{HybridHashmap, Indexable, PyQueryExpr, core::{query::{BulkQueryMapAdder, query_ops::{QueryExpr, evaluate_and_queries_vec}}, structures::{hybrid_set::{HybridSet, HybridSetOps}, m2m::M2MU32, string_interner::{INTERNER}}}, interfaces::filtered_index::FilteredIndex, types::{DEFAULT_INDEXABLE_ARC, IndexTree, StrId}};
 use crate::index::core::query::{QueryMap, attr_parts, evaluate_query};
 
 use crate::index::core::stored_item::StoredItem;
@@ -151,7 +151,7 @@ impl IndexAPI{
         }
 
         for (attr_id, value) in py_val_hashmap.iter() {
-            // if key.starts_with("_"){continue;}
+            if INTERNER.resolve(*attr_id).starts_with("_") {continue;}
             self.add_index(weak_self.clone(), idx, *attr_id, value);
         }
     }
@@ -178,7 +178,7 @@ impl IndexAPI{
             drop(items_writer);
 
             for (key, value) in (*item.get_py_values()).iter(){
-                // if key.starts_with("_"){continue;}
+                if INTERNER.resolve(*key).starts_with("_") {continue;}
                 self.remove_index(item_id, *key as usize, value);
             }
 

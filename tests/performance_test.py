@@ -39,7 +39,7 @@ class Record(Indexable):
         }
 
 
-def random_str(length=6):
+def random_str(length=8):
     return ''.join(random.choices(string.ascii_lowercase, k=length))
 
 # Memory usage helper

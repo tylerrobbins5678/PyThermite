@@ -242,3 +242,17 @@ def test_number_collissions_tuple(index):
         Q.eq("nums", 1023)
     )
     assert len(res.collect()) == 1
+
+
+def test_excludes_attrs_starting_with_underscore(index):
+    obj = TestClass(num=1, _private_num=42)
+    index.add_object(obj)
+
+    query = Q.eq("_private_num", 42)
+    result = index.reduced_query(query).collect()
+    assert len(result) == 0
+
+    obj._private_num = 40
+    query = Q.eq("_private_num", 40)
+    result = index.reduced_query(query).collect()
+    assert len(result) == 0
