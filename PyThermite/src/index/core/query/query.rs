@@ -215,14 +215,6 @@ impl QueryMap {
         }
     }
 
-    pub fn check_prune(&self, val: &PyValue) {
-        let mut shard = self.exact.get_shard(&val);
-        if let Some(ev) = shard.get(val) {
-            if ev.is_empty() {
-                shard.remove(val); // no clone needed
-            }
-        }
-    }
 
     pub fn merge(&self, other: &Self) {
         // Iterate over all values in `self` mutably

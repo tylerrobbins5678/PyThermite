@@ -28,10 +28,10 @@ struct IndexMeta{
 
 #[pyclass(subclass, freelist = 512)]
 pub struct Indexable{
-    meta: Arc<Mutex<SmallVec<[IndexMeta; 4]>>>,
-    pub py_values: Arc<Mutex<HybridHashmap<StrId, PyValue>>>,
     pub id: u32,
-    pub recycle_id_on_drop: bool
+    meta: Arc<Mutex<SmallVec<[IndexMeta; 4]>>>,
+    py_values: Arc<Mutex<HybridHashmap<StrId, PyValue>>>,
+    recycle_id_on_drop: bool
 }
 
 

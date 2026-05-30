@@ -347,7 +347,6 @@ impl IndexAPI{
         if index.len() > attr_id {
             if let Some(val) = index.get(attr_id) { 
                 val.remove_id(py_value, idx);
-                val.check_prune(py_value);
             };
 
             if index[attr_id].is_empty(){
