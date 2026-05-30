@@ -291,14 +291,15 @@ impl IndexAPI{
     pub fn update_index(
         &self,
         weak_self: Weak<IndexAPI>,
+        attr_name: &str,
         attr: StrId, 
         old_pv: Option<&PyValue>,
         new_pv: &PyValue,
         item_id: u32,
     ) {
-//        if attr.starts_with("_") {
-//            return;
-//        }
+        if attr_name.starts_with("_") {
+            return;
+        }
         
         if let Some(old_val) = old_pv {
             self.remove_index(item_id, attr as usize, old_val);

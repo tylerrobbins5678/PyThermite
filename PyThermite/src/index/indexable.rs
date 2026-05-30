@@ -77,9 +77,9 @@ impl Indexable{
                 if let Some(full_index) = ind.index.upgrade() {
                     let name_id = interner.intern(name);
                     if let Some(old_val) = self.get_py_values().get(&name_id){
-                        full_index.update_index(ind.index.clone(), name_id, Some(old_val), &val, self.id);
+                        full_index.update_index(ind.index.clone(), name, name_id, Some(old_val), &val, self.id);
                     } else {
-                        full_index.update_index(ind.index.clone(), name_id, None, &val, self.id);
+                        full_index.update_index(ind.index.clone(), name, name_id, None, &val, self.id);
                     }
                 }
             });
