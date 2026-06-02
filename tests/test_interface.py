@@ -270,3 +270,23 @@ def test_many_attrs_assign(index):
         result = index.reduced_query(query).collect()
         assert len(result) == 1
         assert getattr(result[0], f"attr_{i}") == i
+
+def test_list(index):
+    # tests that many to many nested objects can be queried properly
+    children = [1,2,3,4,5,6,7,8,9]
+    objs = [TestClass(name=f"object_{i}", child=children) for i in range(5)]
+    index.add_object_many(objs)
+
+    nested_result = index.reduced_query(Q.eq("child", 1))
+    assert len(nested_result.collect()) == 5
+    assert all(r.child == children for r in nested_result.collect())
+
+def test_list_str(index):
+    # tests that many to many nested objects can be queried properly
+    children = ["1","2","3","4","5","6","7","8","9"]
+    objs = [TestClass(name=f"object_{i}", child=children) for i in range(5)]
+    index.add_object_many(objs)
+
+    nested_result = index.reduced_query(Q.eq("child", "1"))
+    assert len(nested_result.collect()) == 5
+    assert all(r.child == children for r in nested_result.collect())

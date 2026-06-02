@@ -231,7 +231,9 @@ pub fn evaluate_nested_query(
 ) -> Bitmap {
     let wrapper = PyQueryExpr{inner: expr.clone()};
     let reduced = nested_map.nested.reduced_query(wrapper);
-    nested_map.get_allowed_parents(&reduced.allowed_items)
+    let mut res: Bitmap = nested_map.get_allowed_parents(&reduced.allowed_items);
+    nested_map.unmask_ids(&mut res);
+    res
 }
 
 pub fn evaluate_query(
@@ -364,20 +366,6 @@ pub fn evaluate_query(
         }
         QueryExpr::And(exprs) => {
             evaluate_and_queries_vec(index, all_valid, exprs)
-            // Evaluate all queries in parallel
-//            let mut bitmaps: Vec<Bitmap> = evaluate_queries_vec(index, all_valid, exprs);
-//            bitmaps.sort_by_key(|bm| bm.cardinality());
-//
-//            // Reduce using AND in parallel
-//            let result = bitmaps
-//                .into_iter()
-//                .reduce(|mut a, b| {
-//                    a.and_inplace(&b); // mutate `a` in-place
-//                    a
-//                })
-//                .unwrap_or_else(Bitmap::new); // handle empty exprs
-//
-//            result
         }
         QueryExpr::Or(exprs) => {
             evaluate_queries_vec(index, all_valid, exprs)

@@ -1,9 +1,11 @@
 use std::sync::{Arc, RwLock, RwLockWriteGuard, Weak};
 
+use croaring::Bitmap;
 use ordered_float::OrderedFloat;
 use pyo3::{Python, types::{PyListMethods, PySetMethods, PyTupleMethods}};
+use rustc_hash::FxHashMap;
 
-use crate::index::{core::{index::IndexAPI, query::{QueryMap, b_tree::Key}, stored_item::StoredItem, structures::{boolean_bitmap::BooleanBitmap, composite_key::CompositeKey128, hybrid_set::{HybridSet, HybridSetOps}, ordered_bitmap::NumericalBitmap, positional_bitmap::PositionalBitmap, shards::ShardedHashMap}}, types::StrId, value::{PyIterable, PyValue, RustCastValue, StoredIndexable}};
+use crate::index::{core::{id_alloc::allocate_id, index::IndexAPI, query::{QueryMap, b_tree::Key}, stored_item::StoredItem, structures::{boolean_bitmap::BooleanBitmap, composite_key::CompositeKey128, hybrid_set::{HybridSet, HybridSetOps}, ordered_bitmap::NumericalBitmap, positional_bitmap::PositionalBitmap, shards::ShardedHashMap}}, types::StrId, value::{PyIterable, PyValue, RustCastValue, StoredIndexable}};
 
 
 
@@ -11,6 +13,8 @@ pub struct BulkQueryMapAdder<'a> {
     pub str_radix_map: RwLockWriteGuard<'a, PositionalBitmap>,
     pub num_ordered: RwLockWriteGuard<'a, NumericalBitmap>,
     pub bool_map: RwLockWriteGuard<'a, BooleanBitmap>,
+    pub mapped_ids: RwLockWriteGuard<'a, FxHashMap<u32, u32>>,
+    pub masked_ids: RwLockWriteGuard<'a, Bitmap>,
     map: &'a QueryMap,
 }
 
@@ -20,6 +24,8 @@ impl<'a> BulkQueryMapAdder<'a> {
             str_radix_map: map.write_str_radix_map(),
             num_ordered: map.write_num_ordered(),
             bool_map: map.get_bool_map_writer(),
+            mapped_ids: map.get_mapped_ids_writer(),
+            masked_ids: map.get_masked_ids_writer(),
             map: map,
         }
     }
@@ -41,7 +47,7 @@ impl<'a> BulkQueryMapAdder<'a> {
                 self.map.insert_indexable(index_obj, obj_id);
             },
             RustCastValue::Iterable(py_iterable) => {
-                self.map.insert_iterable(py_iterable, obj_id);
+                self.insert_iterable(py_iterable, obj_id);
             }
             RustCastValue::Bool(b) => self.insert_bool(*b, obj_id),
             RustCastValue::Str(extracted_str) => {
@@ -52,6 +58,45 @@ impl<'a> BulkQueryMapAdder<'a> {
                 self.map.insert_exact(value, obj_id);
             },
         }
+    }
+
+
+    pub fn insert_iterable(&mut self, iterable: &PyIterable, obj_id: u32){
+        Python::with_gil(|py| {
+            match iterable {
+                PyIterable::Dict(_) => {
+//                    let dict = py_dict.bind(py);
+//                    dict.iter().for_each(|(k, v)| {
+//                        self.iterable.entry(k).or_insert(k)
+//                    });
+                },
+
+                PyIterable::List(py_list) => {
+                    for item in py_list.bind(py).iter(){
+                        let index_id = allocate_id();
+                        self.mapped_ids.insert(index_id, obj_id);
+                        self.masked_ids.add(index_id);
+                        self.insert(&PyValue::new(item), index_id);
+                    }
+                },
+                PyIterable::Tuple(py_tuple) => {
+                    for item in py_tuple.bind(py).iter(){
+                        let index_id = allocate_id();
+                        self.mapped_ids.insert(index_id, obj_id);
+                        self.masked_ids.add(index_id);
+                        self.insert(&PyValue::new(item), index_id);
+                    }
+                }
+                PyIterable::Set(py_set) => {
+                    for item in py_set.bind(py).iter(){
+                        let index_id = allocate_id();
+                        self.mapped_ids.insert(index_id, obj_id);
+                        self.masked_ids.add(index_id);
+                        self.insert(&PyValue::new(item), index_id);
+                    }
+                },
+            }
+        });
     }
 
     #[inline]
