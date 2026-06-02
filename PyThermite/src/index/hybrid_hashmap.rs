@@ -1,5 +1,5 @@
 use rustc_hash::FxHashMap;
-use std::{borrow::Borrow, hash::Hash, mem::MaybeUninit, ptr};
+use std::{borrow::Borrow, hash::Hash, mem::MaybeUninit};
 
 const SMALL_SIZE: usize = 8;
 
@@ -67,8 +67,10 @@ impl<K: PartialEq, V> SmallKVMap<K, V> {
         self.len += 1;
     }
 
-    fn drain(self) -> Drain<K, V> {
-        Drain { small: self, idx: 0 }
+    fn drain(mut self) -> Drain<K, V> {
+        let len = self.len as usize;
+        self.len = 0;
+        Drain { small: self, idx: 0, len }
     }
 }
 
@@ -84,16 +86,23 @@ impl<K, V> Drop for SmallKVMap<K, V> {
     }
 }
 
+impl<K: PartialEq, V> Default for SmallKVMap<K, V> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 struct Drain<K, V> {
     small: SmallKVMap<K, V>,
     idx: usize,
+    len: usize,
 }
 
 impl<K, V> Iterator for Drain<K, V> {
     type Item = (K, V);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.idx >= self.small.len {
+        if self.idx >= self.len {
             return None;
         }
 
@@ -101,10 +110,13 @@ impl<K, V> Iterator for Drain<K, V> {
         self.idx += 1;
 
         unsafe {
-            Some((
-                self.small.keys[i].assume_init_read(),
-                self.small.values[i].assume_init_read(),
-            ))
+
+            let k = std::mem::replace(&mut self.small.keys[i], MaybeUninit::uninit())
+                .assume_init();
+            let v = std::mem::replace(&mut self.small.values[i], MaybeUninit::uninit())
+                .assume_init();
+
+            Some((k, v))
         }
     }
 }
@@ -137,15 +149,13 @@ where
                     vec.push(key, value);
                 } else {
                     let mut map = FxHashMap::with_capacity_and_hasher(16, Default::default());
-                    unsafe {
-                        // drain owned small and reassign to enum variant to make this "large"
-                        let small = ptr::read(vec);
-                        for (k,v) in small.drain(){
-                            map.insert(k, v);
-                        }
-                        map.insert(key, value);
-                        *self = HybridHashmap::Map(map);
+                    let mut small = std::mem::take(vec);
+                    // drain owned small and reassign to enum variant to make this "large"
+                    for (k,v) in small.drain(){
+                        map.insert(k, v);
                     }
+                    map.insert(key, value);
+                    *self = HybridHashmap::Map(map);
                 }
             }
             HybridHashmap::Map(map) => { map.insert(key, value); }

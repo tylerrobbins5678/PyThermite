@@ -256,3 +256,17 @@ def test_excludes_attrs_starting_with_underscore(index):
     query = Q.eq("_private_num", 40)
     result = index.reduced_query(query).collect()
     assert len(result) == 0
+
+def test_many_attrs_assign(index):
+    # this was an use case where a double drop occured and was visable on linux
+    attrs = {}
+    for i in range(100):
+        attrs[f"attr_{i}"] = i
+    obj = TestClass(**attrs)
+    index.add_object(obj)
+
+    for i in range(100):
+        query = Q.eq(f"attr_{i}", i)
+        result = index.reduced_query(query).collect()
+        assert len(result) == 1
+        assert getattr(result[0], f"attr_{i}") == i
