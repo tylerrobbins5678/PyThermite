@@ -290,3 +290,16 @@ def test_list_str(index):
     nested_result = index.reduced_query(Q.eq("child", "1"))
     assert len(nested_result.collect()) == 5
     assert all(r.child == children for r in nested_result.collect())
+
+def test_add_remove_add_str(index):
+    # bugfix that was thought to be with string indexing, but was really
+    # a cause removing entire querymaps on removal due to outdated logic
+    # around cleaning up querymaps
+    rec = TestClass(name="HelloWorld")
+    rec2 = TestClass(name="HelloW0rld")
+    index.add_object_many([rec, rec2])
+
+    assert index.get_by_attribute(name="HelloWorld")
+    rec2.name = "hi"
+    assert index.get_by_attribute(name="HelloWorld")
+    rec.name = "HelloWorld"

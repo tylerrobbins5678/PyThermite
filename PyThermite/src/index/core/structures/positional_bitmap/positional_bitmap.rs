@@ -145,7 +145,7 @@ impl PositionalBitmap {
     #[inline(always)]
     pub fn remove(&mut self, s: &str, id: u32) {
         let bytes = s.as_bytes();
-        let start = ((self.map.len() / 2) - (bytes.len() / 2)).saturating_sub(1);
+        let start = self.get_start(bytes);
         match bytes.len() {
             0 => self.empty.remove(id),
             _ => {
@@ -185,7 +185,7 @@ impl PositionalBitmap {
             return res;
         }
 
-        let start = ((self.map.len() / 2) - (bytes.len() / 2)).saturating_sub(1);
+        let start = self.get_start(bytes);
 
         res.or_inplace(self.map[start].contains(bytes[0]));
         res.and_inplace(self.map[start].get_boundry_bytes());
@@ -293,7 +293,7 @@ impl PositionalBitmap {
     }
 
     fn get_start(&self, bytes: &[u8]) -> usize {
-        ((self.map.len() / 2) - (bytes.len() / 2)).saturating_sub(1)
+        ((self.map.len() / 2).saturating_sub(bytes.len() / 2)).saturating_sub(1)
     }
 
     fn ensure_size(&mut self, bytes: &[u8]) {

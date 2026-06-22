@@ -33,7 +33,7 @@ print(f"PyThermite time taken {datetime.now() - start}")
 
 start = datetime.now()
 for i in range(1_000_000):
-    pyth._x = i
+    pyth.x = i
 print(f"PyThermite write time taken {datetime.now() - start}")
 
 start = datetime.now()

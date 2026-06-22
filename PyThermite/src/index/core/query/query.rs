@@ -231,10 +231,6 @@ impl QueryMap {
         self.get_mapped_ids_writer().extend(other.get_mapped_ids_reader().iter());
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.exact.is_empty()
-    }
-
     pub fn get<'a>(
         &self,
         guard: &'a RwLockReadGuard<FxHashMap<PyValue, HybridSet>>,

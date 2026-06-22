@@ -349,11 +349,6 @@ impl IndexAPI{
             if let Some(val) = index.get(attr_id) { 
                 val.remove_id(py_value, idx);
             };
-
-            if index[attr_id].is_empty(){
-                drop(index);
-                self.get_index_writer()[attr_id] = Default::default();
-            }
         }
     }
 
